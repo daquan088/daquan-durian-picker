@@ -1,4 +1,11 @@
-import { overviewModelOutputSchema, type NumberedFruitAssessment, type OverviewFruit, type OverviewSuccessPayload } from '../../shared/contracts'
+import {
+  numberedFruitAssessmentSchema,
+  overviewModelOutputSchema,
+  type NumberedFruitAssessment,
+  type OverviewFruit,
+  type OverviewSuccessPayload,
+} from '../../shared/contracts'
+import { sanitizeAndNumberBoxes } from '../../shared/geometry'
 import { OpenAIClientError } from '../openai/client'
 import { QuotaError } from '../quota/quotaService'
 import { hashValue } from '../security/hash'
@@ -34,7 +41,7 @@ export async function handleOverview(request: Request, dependencies: OverviewDep
 
     const remaining = await dependencies.quota.getRemaining(deviceId)
     if (remaining === 0) {
-      throw new HttpError(429, 'QUOTA_EXHAUSTED', '今日试用次数已用完。')
+      throw new HttpError(429, 'QUOTA_EXHAUSTED', '体验次数已用完。')
     }
 
     let modelOutput: unknown
@@ -136,14 +143,13 @@ export function validateImage(value: unknown): string {
 }
 
 function numberFruits(fruits: readonly OverviewFruit[]): NumberedFruitAssessment[] {
-  return [...fruits]
-    .sort((left, right) =>
-      left.box_2d[0] - right.box_2d[0] ||
-      left.box_2d[1] - right.box_2d[1] ||
-      left.box_2d[2] - right.box_2d[2] ||
-      left.box_2d[3] - right.box_2d[3],
-    )
-    .map((fruit, index) => ({ ...fruit, id: index + 1 }))
+  return sanitizeAndNumberBoxes(fruits).map((fruit) => {
+    const parsed = numberedFruitAssessmentSchema.safeParse(fruit)
+    if (!parsed.success) {
+      throw new HttpError(502, 'MODEL_OUTPUT_INVALID', 'AI 返回的结果无效。')
+    }
+    return parsed.data
+  })
 }
 
 function chooseShortlist(fruits: readonly NumberedFruitAssessment[]): number[] {
@@ -156,7 +162,7 @@ function chooseShortlist(fruits: readonly NumberedFruitAssessment[]): number[] {
 
 function mapQuotaError(error: unknown): HttpError {
   if (error instanceof QuotaError) {
-    if (error.code === 'QUOTA_EXHAUSTED') return new HttpError(429, error.code, '今日试用次数已用完。')
+    if (error.code === 'QUOTA_EXHAUSTED') return new HttpError(429, error.code, '体验次数已用完。')
     if (error.code === 'IP_RATE_LIMIT') return new HttpError(429, error.code, '当前网络请求过于频繁。')
     if (error.code === 'INVALID_REQUEST') return new HttpError(400, error.code, '请求参数无效。')
   }

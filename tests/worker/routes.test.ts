@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createApp } from '../../worker/http'
 import { OpenAIClientError, type OpenAIResponsesClient } from '../../worker/openai/client'
 import { QuotaError } from '../../worker/quota/quotaService'
+import { verifyTaskToken } from '../../worker/security/taskToken'
 
 const origin = 'https://picker.example'
 const deviceId = '123e4567-e89b-42d3-a456-426614174000'
@@ -132,6 +133,32 @@ describe('secure analysis routes', () => {
     expect(ai.analyzeOverview).not.toHaveBeenCalled()
   })
 
+  it('enforces the 25 MiB cap while reading an unbounded streaming body without Content-Length', async () => {
+    const { app, ai } = makeApp()
+    const chunk = new Uint8Array(1024 * 1024)
+    let emitted = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (emitted === 26) {
+          controller.close()
+          return
+        }
+        emitted += 1
+        controller.enqueue(chunk)
+      },
+    })
+    const request = new Request(`${origin}/api/analyze-overview`, {
+      method: 'POST',
+      headers: { origin, 'x-device-id': deviceId, 'cf-connecting-ip': '203.0.113.7', 'content-type': 'application/json' },
+      body,
+      duplex: 'half',
+    } as RequestInit)
+
+    expect(request.headers.get('content-length')).toBeNull()
+    await expectError(await app.fetch(request), 413, 'IMAGE_TOO_LARGE')
+    expect(ai.analyzeOverview).not.toHaveBeenCalled()
+  })
+
   it('allows only JPEG, PNG, or WebP base64 data URLs', async () => {
     const { app, ai } = makeApp()
     await expectError(await app.fetch(apiRequest('/api/analyze-overview', { image: 'data:image/gif;base64,R0lGODlh' })), 415, 'UNSUPPORTED_MEDIA_TYPE')
@@ -160,7 +187,12 @@ describe('secure analysis routes', () => {
 
   it('does not call AI when quota is exhausted and does not charge rejected overview results', async () => {
     const exhausted = makeApp({ remaining: 0 })
-    await expectError(await exhausted.app.fetch(apiRequest('/api/analyze-overview', { image })), 429, 'QUOTA_EXHAUSTED')
+    const exhaustedResponse = await exhausted.app.fetch(apiRequest('/api/analyze-overview', { image }))
+    expect(exhaustedResponse.status).toBe(429)
+    await expect(exhaustedResponse.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'QUOTA_EXHAUSTED', message: '体验次数已用完。' },
+    })
     expect(exhausted.ai.analyzeOverview).not.toHaveBeenCalled()
     expect(exhausted.quota.reserve).not.toHaveBeenCalled()
 
@@ -189,6 +221,33 @@ describe('secure analysis routes', () => {
     await expectError(await app.fetch(apiRequest('/api/analyze-candidates', { taskToken: token, candidates: [{ candidate_id: 2, stem: image, body: image, bottom: image }] })), 502, 'MODEL_OUTPUT_INVALID')
     expect(ai.analyzeCandidates).toHaveBeenCalledOnce()
     expect(quota.reserve).toHaveBeenCalledTimes(chargesBeforeCandidate)
+  })
+
+  it('uses shared box sanitization before shortlist selection and task signing', async () => {
+    const sanitizedOverview = {
+      ...overview,
+      fruits: [
+        { box_2d: [10, 10, 20, 20] as [number, number, number, number], visibility: 'high' as const, status: 'preferred' as const, evidence: ['面积过小'], risks: [], evidence_strength: 'high' as const },
+        { box_2d: [100, 100, 300, 300] as [number, number, number, number], visibility: 'high' as const, status: 'normal' as const, evidence: ['左上'], risks: [], evidence_strength: 'high' as const },
+        { box_2d: [100, 400, 300, 600] as [number, number, number, number], visibility: 'high' as const, status: 'preferred' as const, evidence: ['右上'], risks: [], evidence_strength: 'high' as const },
+        { box_2d: [105, 405, 305, 605] as [number, number, number, number], visibility: 'high' as const, status: 'preferred' as const, evidence: ['重复框'], risks: [], evidence_strength: 'high' as const },
+        { box_2d: [500, 100, 700, 300] as [number, number, number, number], visibility: 'medium' as const, status: 'risky' as const, evidence: ['下一排'], risks: [], evidence_strength: 'medium' as const },
+      ],
+    }
+    const { app, quota } = makeApp({ overviewResult: sanitizedOverview })
+    const response = await app.fetch(apiRequest('/api/analyze-overview', { image }))
+    expect(response.status).toBe(200)
+    const payload = await response.json() as {
+      data: { fruits: Array<{ id: number; box_2d: number[] }>; shortlist_ids: number[]; taskToken: string }
+    }
+    expect(payload.data.fruits.map(({ id, box_2d }) => ({ id, box_2d }))).toEqual([
+      { id: 1, box_2d: [100, 100, 300, 300] },
+      { id: 2, box_2d: [100, 400, 300, 600] },
+      { id: 3, box_2d: [500, 100, 700, 300] },
+    ])
+    expect(payload.data.shortlist_ids).toEqual([2, 1, 3])
+    await expect(verifyTaskToken(payload.data.taskToken, 'test-secret', 0)).resolves.toMatchObject({ allowedIds: [2, 1, 3] })
+    expect(quota.reserve).toHaveBeenCalledOnce()
   })
 
   it('sets hardened JSON headers on every API response and delegates non-api paths unchanged', async () => {
