@@ -1,7 +1,6 @@
-export interface Env {
-  ASSETS: Fetcher
-  MODEL_ID: string
-}
+import type { Env } from './env'
+
+export type { Env } from './env'
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {

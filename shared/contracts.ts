@@ -180,6 +180,7 @@ export const apiErrorCodeSchema = z.enum([
   'UNSUPPORTED_MEDIA_TYPE',
   'INVALID_TASK',
   'QUOTA_EXHAUSTED',
+  'IP_RATE_LIMIT',
   'NOT_FOUND',
   'PROVIDER_AUTH',
   'PROVIDER_RATE_LIMIT',
