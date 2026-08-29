@@ -6,6 +6,20 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "QUOTA_COORDINATOR",
+        "class_name": "QuotaCoordinator"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["QuotaCoordinator"]
+    }
+  ],
   "vars": {
     "MODEL_ID": "gpt-5.6-terra"
   }

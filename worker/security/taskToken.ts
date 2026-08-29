@@ -102,8 +102,9 @@ export async function signTaskToken(payload: TaskTokenPayload, secret: string): 
     return invalidTask()
   }
 
-  const encodedPayload = toBase64Url(encoder.encode(JSON.stringify(validatedPayload)))
-  const signature = await hmac(encoder.encode(encodedPayload), secret)
+  const payloadBytes = encoder.encode(JSON.stringify(validatedPayload))
+  const encodedPayload = toBase64Url(payloadBytes)
+  const signature = await hmac(payloadBytes, secret)
   return `${encodedPayload}.${toBase64Url(signature)}`
 }
 
@@ -118,15 +119,16 @@ export async function verifyTaskToken(token: string, secret: string, now = Math.
   }
 
   const [encodedPayload, encodedSignature] = parts
+  const payloadBytes = fromBase64Url(encodedPayload)
   const providedSignature = fromBase64Url(encodedSignature)
-  const expectedSignature = await hmac(encoder.encode(encodedPayload), secret)
+  const expectedSignature = await hmac(payloadBytes, secret)
   if (!constantTimeEqual(providedSignature, expectedSignature)) {
     return invalidTask()
   }
 
   let parsedPayload: unknown
   try {
-    parsedPayload = JSON.parse(decoder.decode(fromBase64Url(encodedPayload)))
+    parsedPayload = JSON.parse(decoder.decode(payloadBytes))
   } catch {
     return invalidTask()
   }

@@ -16,11 +16,33 @@ const payload: TaskTokenPayload = {
   exp: 1_800_000_000,
 }
 
+function decodeBase64Url(value: string): Uint8Array {
+  const padded = value.replaceAll('-', '+').replaceAll('_', '/') + '='.repeat((4 - value.length % 4) % 4)
+  return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0))
+}
+
 describe('taskToken', () => {
   it('signs and verifies a task payload', async () => {
     const token = await signTaskToken(payload, secret)
 
     await expect(verifyTaskToken(token, secret, 1_799_999_999)).resolves.toEqual(payload)
+  })
+
+  it('signs the exact raw UTF-8 JSON payload bytes', async () => {
+    const token = await signTaskToken(payload, secret)
+    const [encodedPayload, encodedSignature] = token.split('.')
+    const payloadBytes = decodeBase64Url(encodedPayload)
+    const signatureBytes = decodeBase64Url(encodedSignature)
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['verify'],
+    )
+
+    expect(new TextDecoder().decode(payloadBytes)).toBe(JSON.stringify(payload))
+    await expect(crypto.subtle.verify('HMAC', key, signatureBytes, payloadBytes)).resolves.toBe(true)
   })
 
   it('rejects a modified token without exposing token internals', async () => {
