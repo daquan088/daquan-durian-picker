@@ -3,6 +3,7 @@
   "compatibility_date": "2026-08-29",
   "main": "./worker/index.ts",
   "assets": {
+    "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   },
   "vars": {
