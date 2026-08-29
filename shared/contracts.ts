@@ -116,6 +116,14 @@ export const overviewSuccessPayloadSchema = z.object({
     })
   }
 
+  if (new Set(shortlist_ids).size !== shortlist_ids.length) {
+    context.addIssue({
+      code: 'custom',
+      path: ['shortlist_ids'],
+      message: 'Shortlisted IDs must be unique.',
+    })
+  }
+
   const detectedIds = new Set(fruits.map(({ id }) => id))
   if (shortlist_ids.some((id) => !detectedIds.has(id))) {
     context.addIssue({
