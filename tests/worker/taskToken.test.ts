@@ -21,6 +21,18 @@ function decodeBase64Url(value: string): Uint8Array {
   return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0))
 }
 
+function mutateUnusedPaddingBits(value: string, byteLength: number): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+  const unusedBits = byteLength % 3 === 1 ? 4 : byteLength % 3 === 2 ? 2 : 0
+  if (unusedBits === 0) {
+    throw new Error('Test fixture must have unused base64url padding bits.')
+  }
+
+  const finalIndex = alphabet.indexOf(value.at(-1)!)
+  const mutatedIndex = finalIndex | 1
+  return `${value.slice(0, -1)}${alphabet[mutatedIndex]}`
+}
+
 describe('taskToken', () => {
   it('signs and verifies a task payload', async () => {
     const token = await signTaskToken(payload, secret)
@@ -50,6 +62,32 @@ describe('taskToken', () => {
     const modified = `${token.startsWith('A') ? 'B' : 'A'}${token.slice(1)}`
 
     await expect(verifyTaskToken(modified, secret, 1_799_999_999)).rejects.toMatchObject({ code: 'INVALID_TASK' })
+  })
+
+  it('rejects non-canonical payload base64url with modified unused padding bits', async () => {
+    const token = await signTaskToken(payload, secret)
+    const [encodedPayload, encodedSignature] = token.split('.')
+    const payloadBytes = decodeBase64Url(encodedPayload)
+    const modifiedPayload = mutateUnusedPaddingBits(encodedPayload, payloadBytes.length)
+
+    expect(modifiedPayload).not.toBe(encodedPayload)
+    expect(decodeBase64Url(modifiedPayload)).toEqual(payloadBytes)
+    await expect(
+      verifyTaskToken(`${modifiedPayload}.${encodedSignature}`, secret, 1_799_999_999),
+    ).rejects.toMatchObject({ code: 'INVALID_TASK' })
+  })
+
+  it('rejects non-canonical signature base64url with modified unused padding bits', async () => {
+    const token = await signTaskToken(payload, secret)
+    const [encodedPayload, encodedSignature] = token.split('.')
+    const signatureBytes = decodeBase64Url(encodedSignature)
+    const modifiedSignature = mutateUnusedPaddingBits(encodedSignature, signatureBytes.length)
+
+    expect(modifiedSignature).not.toBe(encodedSignature)
+    expect(decodeBase64Url(modifiedSignature)).toEqual(signatureBytes)
+    await expect(
+      verifyTaskToken(`${encodedPayload}.${modifiedSignature}`, secret, 1_799_999_999),
+    ).rejects.toMatchObject({ code: 'INVALID_TASK' })
   })
 
   it('rejects expired task tokens', async () => {

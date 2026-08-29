@@ -42,7 +42,11 @@ function fromBase64Url(value: string): Uint8Array {
   try {
     const padded = value.replaceAll('-', '+').replaceAll('_', '/') + '='.repeat((4 - value.length % 4) % 4)
     const binary = atob(padded)
-    return Uint8Array.from(binary, (character) => character.charCodeAt(0))
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
+    if (toBase64Url(bytes) !== value) {
+      return invalidTask()
+    }
+    return bytes
   } catch {
     return invalidTask()
   }
