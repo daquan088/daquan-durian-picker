@@ -1,10 +1,60 @@
 // @vitest-environment node
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createQuotaCoordinatorClient,
+  reserveWithPreparedAlarm,
   scheduleQuotaAlarm,
 } from '../../worker/quota/quotaCoordinator'
+import {
+  createQuotaService,
+  type QuotaCounterRecord,
+  type QuotaCounterStore,
+} from '../../worker/quota/quotaService'
+
+class MemoryCoordinatorStore implements QuotaCounterStore {
+  readonly records = new Map<string, QuotaCounterRecord>()
+
+  transaction<T>(closure: () => T): T {
+    const snapshot = new Map(this.records)
+    try {
+      return closure()
+    } catch (error) {
+      this.records.clear()
+      for (const [key, value] of snapshot) {
+        this.records.set(key, value)
+      }
+      throw error
+    }
+  }
+
+  get(key: string): unknown {
+    return this.records.get(key)
+  }
+
+  put(key: string, value: QuotaCounterRecord): void {
+    this.records.set(key, { ...value })
+  }
+
+  deleteExpired(nowSeconds: number): void {
+    for (const [key, value] of this.records) {
+      if (key.startsWith('ip:') && value.expiresAt !== null && value.expiresAt <= nowSeconds) {
+        this.records.delete(key)
+      }
+    }
+  }
+
+  getEarliestExpiry(): number | null {
+    const expiries = [...this.records.entries()]
+      .filter(([key, value]) => key.startsWith('ip:') && value.expiresAt !== null)
+      .map(([, value]) => value.expiresAt as number)
+    return expiries.length === 0 ? null : Math.min(...expiries)
+  }
+}
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('quotaCoordinator client', () => {
   it('routes every operation to the one global coordinator instance', async () => {
@@ -101,5 +151,31 @@ describe('quotaCoordinator client', () => {
     await scheduleQuotaAlarm(storage, 100, true)
 
     expect(storage.setAlarm).toHaveBeenCalledWith(100_000)
+  })
+
+  it('does not charge quota when alarm preparation fails', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-29T12:00:00.000Z'))
+    const store = new MemoryCoordinatorStore()
+    const quota = createQuotaService(store, 'test-salt')
+    const alarmStorage = {
+      getAlarm: vi.fn().mockResolvedValue(null),
+      setAlarm: vi.fn().mockRejectedValue(new Error('internal alarm details')),
+      deleteAlarm: vi.fn().mockResolvedValue(undefined),
+    }
+
+    const operation = reserveWithPreparedAlarm(
+      quota,
+      store,
+      alarmStorage,
+      'device-123',
+      '203.0.113.42',
+    )
+
+    await expect(operation).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+    await expect(operation).rejects.not.toThrow('internal alarm details')
+    await expect(quota.getRemaining('device-123')).resolves.toBe(5)
+    expect(store.records.size).toBe(0)
+    expect(alarmStorage.setAlarm).toHaveBeenCalledWith(1_788_177_600_000)
   })
 })

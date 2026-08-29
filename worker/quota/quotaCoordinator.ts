@@ -2,6 +2,7 @@ import type { Env } from '../env'
 import {
   cleanupExpiredQuota,
   createQuotaService,
+  IP_RETENTION_SECONDS,
   QuotaError,
   type QuotaCounterRecord,
   type QuotaCounterStore,
@@ -17,11 +18,15 @@ interface AlarmStorage {
   deleteAlarm(): Promise<void>
 }
 
+interface CoordinatorQuotaStore extends QuotaCounterStore {
+  getEarliestExpiry(): number | null
+}
+
 type CoordinatorSuccess = { ok: true; remaining: number }
 type CoordinatorFailure = { ok: false; error: { code: QuotaErrorCode; message: string } }
 type CoordinatorResponse = CoordinatorSuccess | CoordinatorFailure
 
-class SqliteQuotaCounterStore implements QuotaCounterStore {
+class SqliteQuotaCounterStore implements CoordinatorQuotaStore {
   constructor(private readonly storage: DurableObjectStorage) {
     this.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS quota_counters (
@@ -125,6 +130,32 @@ export async function scheduleQuotaAlarm(
   }
 }
 
+export async function reserveWithPreparedAlarm(
+  quota: ReturnType<typeof createQuotaService>,
+  store: CoordinatorQuotaStore,
+  alarmStorage: AlarmStorage,
+  deviceId: string,
+  ipAddress: string,
+): Promise<{ remaining: number }> {
+  const now = new Date()
+  const nowSeconds = Math.floor(now.getTime() / 1000)
+
+  cleanupExpiredQuota(store, nowSeconds)
+  const existingExpiry = store.getEarliestExpiry()
+  const proposedExpiry = nowSeconds + IP_RETENTION_SECONDS
+  const earliestExpiry = existingExpiry === null
+    ? proposedExpiry
+    : Math.min(existingExpiry, proposedExpiry)
+
+  try {
+    await scheduleQuotaAlarm(alarmStorage, earliestExpiry)
+  } catch {
+    throw new QuotaError('INTERNAL_ERROR')
+  }
+
+  return quota.reserve(deviceId, ipAddress, now)
+}
+
 function safeFailure(error: unknown): Response {
   const code = error instanceof QuotaError ? error.code : 'INTERNAL_ERROR'
   const status = code === 'INVALID_REQUEST'
@@ -184,12 +215,13 @@ export class QuotaCoordinator implements DurableObject {
         if (Object.keys(body).length !== 2 || !('deviceId' in body) || !('ipAddress' in body)) {
           throw new QuotaError('INVALID_REQUEST')
         }
-        const result = await this.quota.reserve(
+        const result = await reserveWithPreparedAlarm(
+          this.quota,
+          this.store,
+          this.state.storage,
           body.deviceId as string,
           body.ipAddress as string,
-          new Date(),
         )
-        await this.synchronizeAlarm()
         return Response.json({ ok: true, remaining: result.remaining } satisfies CoordinatorSuccess)
       }
 

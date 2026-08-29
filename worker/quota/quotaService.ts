@@ -2,7 +2,7 @@ import { hashValue } from '../security/hash'
 
 const DEVICE_LIMIT = 5
 const IP_DAILY_LIMIT = 50
-const IP_RETENTION_SECONDS = 172800
+export const IP_RETENTION_SECONDS = 172800
 
 export interface QuotaCounterRecord {
   count: number
