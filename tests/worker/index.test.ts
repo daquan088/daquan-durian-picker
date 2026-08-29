@@ -22,7 +22,10 @@ describe('Worker routing', () => {
     const response = await worker.fetch(new Request('https://example.com/api/pick'), env)
 
     expect(response.status).toBe(404)
-    expect(await response.json()).toEqual({ error: 'Not found' })
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: { code: 'NOT_FOUND', message: '请求地址不存在。' },
+    })
     expect(assets.fetch).not.toHaveBeenCalled()
   })
 })

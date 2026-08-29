@@ -167,11 +167,16 @@ export const finalRankingSuccessPayloadSchema = z.object({
   result: finalRankingSchema,
 }).strict()
 
+export const quotaSuccessPayloadSchema = z.object({
+  remaining: z.number().int().min(0).max(5),
+}).strict()
+
 export const apiSuccessEnvelopeSchema = <TSchema extends z.ZodType>(dataSchema: TSchema) =>
   z.object({ ok: z.literal(true), data: dataSchema }).strict()
 
 export const overviewSuccessEnvelopeSchema = apiSuccessEnvelopeSchema(overviewSuccessPayloadSchema)
 export const finalRankingSuccessEnvelopeSchema = apiSuccessEnvelopeSchema(finalRankingSuccessPayloadSchema)
+export const quotaSuccessEnvelopeSchema = apiSuccessEnvelopeSchema(quotaSuccessPayloadSchema)
 
 export const apiErrorCodeSchema = z.enum([
   'INVALID_REQUEST',
@@ -216,7 +221,9 @@ export type FinalRankingItem = z.infer<typeof finalRankingItemSchema>
 export type FinalRanking = z.infer<typeof finalRankingSchema>
 export type OverviewSuccessPayload = z.infer<typeof overviewSuccessPayloadSchema>
 export type FinalRankingSuccessPayload = z.infer<typeof finalRankingSuccessPayloadSchema>
+export type QuotaSuccessPayload = z.infer<typeof quotaSuccessPayloadSchema>
 export type OverviewSuccessEnvelope = z.infer<typeof overviewSuccessEnvelopeSchema>
 export type FinalRankingSuccessEnvelope = z.infer<typeof finalRankingSuccessEnvelopeSchema>
+export type QuotaSuccessEnvelope = z.infer<typeof quotaSuccessEnvelopeSchema>
 export type ApiErrorCode = z.infer<typeof apiErrorCodeSchema>
 export type ApiErrorEnvelope = z.infer<typeof apiErrorEnvelopeSchema>
