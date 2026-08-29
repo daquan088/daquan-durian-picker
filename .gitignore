@@ -1,1 +1,9 @@
 .worktrees/
+node_modules/
+dist/
+.dev.vars
+.wrangler/
+playwright-report/
+test-results/
+coverage/
+*.local
