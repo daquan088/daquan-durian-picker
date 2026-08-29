@@ -35,7 +35,23 @@ export const overviewModelOutputSchema = z.object({
   image_quality: photoQualitySchema,
   warnings: z.array(visibleTextSchema).max(12),
   fruits: z.array(overviewFruitSchema).max(20),
-}).strict()
+}).strict().superRefine(({ processable, too_many, fruits }, context) => {
+  if ((!processable || too_many) && fruits.length > 0) {
+    context.addIssue({
+      code: 'custom',
+      path: ['fruits'],
+      message: 'Unprocessable or too-many overviews must not contain fruits.',
+    })
+  }
+
+  if (too_many && processable) {
+    context.addIssue({
+      code: 'custom',
+      path: ['processable'],
+      message: 'A too-many overview must not be processable.',
+    })
+  }
+})
 
 export const numberedFruitSchema = rawFruitSchema.extend({
   id: identifierSchema,
@@ -108,11 +124,24 @@ export const overviewSuccessPayloadSchema = z.object({
   taskToken: z.string().trim().min(1).max(4096),
   remaining: z.number().int().min(0).max(5),
 }).strict().superRefine(({ fruits, shortlist_ids }, context) => {
-  if (fruits.length >= 3 && shortlist_ids.length < 3) {
+  const fruitIds = fruits.map(({ id }) => id).sort((left, right) => left - right)
+  if (!fruitIds.every((id, index) => id === index + 1)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['fruits'],
+      message: 'Fruit IDs must be unique and continuous from one.',
+    })
+  }
+
+  const eligibleIds = new Set(fruits
+    .filter(({ status, evidence }) => status !== 'insufficient' && evidence.length > 0)
+    .map(({ id }) => id))
+  const minimumShortlistCount = Math.min(3, eligibleIds.size)
+  if (shortlist_ids.length < minimumShortlistCount) {
     context.addIssue({
       code: 'custom',
       path: ['shortlist_ids'],
-      message: 'At least three candidates must be shortlisted when three or more fruits are available.',
+      message: 'The shortlist must include all eligible fruits when fewer than three are eligible.',
     })
   }
 
@@ -124,12 +153,11 @@ export const overviewSuccessPayloadSchema = z.object({
     })
   }
 
-  const detectedIds = new Set(fruits.map(({ id }) => id))
-  if (shortlist_ids.some((id) => !detectedIds.has(id))) {
+  if (shortlist_ids.some((id) => !eligibleIds.has(id))) {
     context.addIssue({
       code: 'custom',
       path: ['shortlist_ids'],
-      message: 'Shortlisted IDs must refer to detected fruits.',
+      message: 'Shortlisted IDs must refer to eligible fruits with visible evidence.',
     })
   }
 })
