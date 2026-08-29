@@ -1,5 +1,6 @@
 import type { Env } from '../env'
 import {
+  cleanupExpiredQuota,
   createQuotaService,
   QuotaError,
   type QuotaCounterRecord,
@@ -9,6 +10,12 @@ import {
 
 const GLOBAL_COORDINATOR_NAME = 'global'
 const INTERNAL_URL = 'https://quota-coordinator.internal'
+
+interface AlarmStorage {
+  getAlarm(): Promise<number | null>
+  setAlarm(scheduledTime: number | Date): Promise<void>
+  deleteAlarm(): Promise<void>
+}
 
 type CoordinatorSuccess = { ok: true; remaining: number }
 type CoordinatorFailure = { ok: false; error: { code: QuotaErrorCode; message: string } }
@@ -67,6 +74,55 @@ class SqliteQuotaCounterStore implements QuotaCounterStore {
       nowSeconds,
     )
   }
+
+  getEarliestExpiry(): number | null {
+    const row = this.storage.sql.exec<{
+      expiresAt: SqlStorageValue
+      malformed: SqlStorageValue
+    }>(
+      `SELECT MIN(expires_at) AS expiresAt,
+              SUM(CASE WHEN expires_at IS NULL OR typeof(expires_at) != 'integer' THEN 1 ELSE 0 END) AS malformed
+       FROM quota_counters
+       WHERE key LIKE 'ip:%'`,
+    ).one()
+
+    if (row.malformed !== null && row.malformed !== 0) {
+      throw new QuotaError('INTERNAL_ERROR')
+    }
+
+    if (row.expiresAt === null) {
+      return null
+    }
+
+    if (!Number.isSafeInteger(row.expiresAt) || (row.expiresAt as number) < 0) {
+      throw new QuotaError('INTERNAL_ERROR')
+    }
+
+    return row.expiresAt as number
+  }
+}
+
+export async function scheduleQuotaAlarm(
+  storage: AlarmStorage,
+  nextExpirySeconds: number | null,
+  replaceExisting = false,
+): Promise<void> {
+  const existingAlarm = await storage.getAlarm()
+  if (nextExpirySeconds === null) {
+    if (existingAlarm !== null) {
+      await storage.deleteAlarm()
+    }
+    return
+  }
+
+  if (!Number.isSafeInteger(nextExpirySeconds) || nextExpirySeconds < 0) {
+    throw new QuotaError('INTERNAL_ERROR')
+  }
+
+  const nextAlarm = nextExpirySeconds * 1000
+  if (replaceExisting || existingAlarm === null || nextAlarm < existingAlarm) {
+    await storage.setAlarm(nextAlarm)
+  }
 }
 
 function safeFailure(error: unknown): Response {
@@ -91,10 +147,22 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 export class QuotaCoordinator implements DurableObject {
+  private readonly state: DurableObjectState
+  private readonly store: SqliteQuotaCounterStore
   private readonly quota: ReturnType<typeof createQuotaService>
 
   constructor(state: DurableObjectState, env: Env) {
-    this.quota = createQuotaService(new SqliteQuotaCounterStore(state.storage), env.QUOTA_SALT)
+    this.state = state
+    this.store = new SqliteQuotaCounterStore(state.storage)
+    this.quota = createQuotaService(this.store, env.QUOTA_SALT)
+  }
+
+  private async synchronizeAlarm(replaceExisting = false): Promise<void> {
+    await scheduleQuotaAlarm(
+      this.state.storage,
+      this.store.getEarliestExpiry(),
+      replaceExisting,
+    )
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -113,16 +181,22 @@ export class QuotaCoordinator implements DurableObject {
       const pathname = new URL(request.url).pathname
 
       if (pathname === '/reserve') {
-        const now = typeof body.now === 'number' ? new Date(body.now) : new Date(Number.NaN)
+        if (Object.keys(body).length !== 2 || !('deviceId' in body) || !('ipAddress' in body)) {
+          throw new QuotaError('INVALID_REQUEST')
+        }
         const result = await this.quota.reserve(
           body.deviceId as string,
           body.ipAddress as string,
-          now,
+          new Date(),
         )
+        await this.synchronizeAlarm()
         return Response.json({ ok: true, remaining: result.remaining } satisfies CoordinatorSuccess)
       }
 
       if (pathname === '/remaining') {
+        if (Object.keys(body).length !== 1 || !('deviceId' in body)) {
+          throw new QuotaError('INVALID_REQUEST')
+        }
         const remaining = await this.quota.getRemaining(body.deviceId as string)
         return Response.json({ ok: true, remaining } satisfies CoordinatorSuccess)
       }
@@ -131,6 +205,11 @@ export class QuotaCoordinator implements DurableObject {
     } catch (error) {
       return safeFailure(error)
     }
+  }
+
+  async alarm(): Promise<void> {
+    cleanupExpiredQuota(this.store, Math.floor(Date.now() / 1000))
+    await this.synchronizeAlarm(true)
   }
 }
 
@@ -198,8 +277,8 @@ export function createQuotaCoordinatorClient(env: Pick<Env, 'QUOTA_COORDINATOR'>
       return call('/remaining', { deviceId })
     },
 
-    async reserve(deviceId: string, ipAddress: string, now = new Date()): Promise<{ remaining: number }> {
-      const remaining = await call('/reserve', { deviceId, ipAddress, now: now.getTime() })
+    async reserve(deviceId: string, ipAddress: string): Promise<{ remaining: number }> {
+      const remaining = await call('/reserve', { deviceId, ipAddress })
       return { remaining }
     },
   }

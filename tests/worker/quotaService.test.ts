@@ -160,6 +160,23 @@ describe('quotaService', () => {
     expect(store.records.has(expiredKey)).toBe(false)
   })
 
+  it('commits expired IP cleanup even when the reservation transaction rejects', async () => {
+    const quota = createQuotaService(store, 'test-salt')
+    const now = new Date('2026-09-01T00:00:00.000Z')
+    const deviceKey = `device:${await hashValue('test-salt', deviceId)}`
+    const expiredIpKey = `ip:2026-08-29:${await hashValue('test-salt', '198.51.100.10')}`
+    store.seed(deviceKey, { count: 5, expiresAt: null })
+    store.seed(expiredIpKey, {
+      count: 1,
+      expiresAt: Math.floor(now.getTime() / 1000) - 1,
+    })
+
+    await expect(quota.reserve(deviceId, ipAddress, now)).rejects.toMatchObject({ code: 'QUOTA_EXHAUSTED' })
+
+    expect(store.records.has(expiredIpKey)).toBe(false)
+    expect(store.records.get(deviceKey)).toEqual({ count: 5, expiresAt: null })
+  })
+
   it('does not reserve after input validation fails', async () => {
     const quota = createQuotaService(store, 'test-salt')
 

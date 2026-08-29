@@ -1,7 +1,10 @@
 // @vitest-environment node
 
 import { describe, expect, it, vi } from 'vitest'
-import { createQuotaCoordinatorClient } from '../../worker/quota/quotaCoordinator'
+import {
+  createQuotaCoordinatorClient,
+  scheduleQuotaAlarm,
+} from '../../worker/quota/quotaCoordinator'
 
 describe('quotaCoordinator client', () => {
   it('routes every operation to the one global coordinator instance', async () => {
@@ -13,12 +16,22 @@ describe('quotaCoordinator client', () => {
       QUOTA_COORDINATOR: { getByName },
     } as never)
 
-    await expect(client.reserve('device-123', '203.0.113.42', new Date(0))).resolves.toEqual({ remaining: 4 })
+    const reserveWithCallerTime = client.reserve as unknown as (
+      deviceId: string,
+      ipAddress: string,
+      callerTime: Date,
+    ) => Promise<{ remaining: number }>
+    await expect(reserveWithCallerTime('device-123', '203.0.113.42', new Date(0))).resolves.toEqual({ remaining: 4 })
     await expect(client.getRemaining('device-123')).resolves.toBe(4)
 
     expect(getByName).toHaveBeenCalledTimes(1)
     expect(getByName).toHaveBeenCalledWith('global')
     expect(fetch).toHaveBeenCalledTimes(2)
+    const reserveInit = fetch.mock.calls[0][1] as RequestInit
+    expect(JSON.parse(reserveInit.body as string)).toEqual({
+      deviceId: 'device-123',
+      ipAddress: '203.0.113.42',
+    })
   })
 
   it('converts coordinator RPC failures to a safe error', async () => {
@@ -44,5 +57,49 @@ describe('quotaCoordinator client', () => {
     } as never)
 
     await expect(client.getRemaining('device-123')).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+  })
+
+  it('schedules an earlier expiry without replacing an already earlier alarm', async () => {
+    const setAlarm = vi.fn().mockResolvedValue(undefined)
+    const deleteAlarm = vi.fn().mockResolvedValue(undefined)
+    const storage = {
+      getAlarm: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(50_000),
+      setAlarm,
+      deleteAlarm,
+    }
+
+    await scheduleQuotaAlarm(storage, 100)
+    await scheduleQuotaAlarm(storage, 100)
+
+    expect(setAlarm).toHaveBeenCalledOnce()
+    expect(setAlarm).toHaveBeenCalledWith(100_000)
+    expect(deleteAlarm).not.toHaveBeenCalled()
+  })
+
+  it('clears the alarm when no IP expiry remains', async () => {
+    const storage = {
+      getAlarm: vi.fn().mockResolvedValue(100_000),
+      setAlarm: vi.fn().mockResolvedValue(undefined),
+      deleteAlarm: vi.fn().mockResolvedValue(undefined),
+    }
+
+    await scheduleQuotaAlarm(storage, null)
+
+    expect(storage.deleteAlarm).toHaveBeenCalledOnce()
+    expect(storage.setAlarm).not.toHaveBeenCalled()
+  })
+
+  it('replaces a fired alarm with the next remaining expiry', async () => {
+    const storage = {
+      getAlarm: vi.fn().mockResolvedValue(50_000),
+      setAlarm: vi.fn().mockResolvedValue(undefined),
+      deleteAlarm: vi.fn().mockResolvedValue(undefined),
+    }
+
+    await scheduleQuotaAlarm(storage, 100, true)
+
+    expect(storage.setAlarm).toHaveBeenCalledWith(100_000)
   })
 })

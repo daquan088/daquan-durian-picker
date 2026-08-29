@@ -29,6 +29,12 @@ export class QuotaError extends Error {
   }
 }
 
+export function cleanupExpiredQuota(store: QuotaCounterStore, nowSeconds: number): void {
+  store.transaction(() => {
+    store.deleteExpired(nowSeconds)
+  })
+}
+
 function failClosed(): never {
   throw new QuotaError('INTERNAL_ERROR')
 }
@@ -114,9 +120,9 @@ export function createQuotaService(store: QuotaCounterStore, salt: string) {
       const deviceKey = `device:${hashedDevice}`
       const ipKey = `ip:${resolvedTime.day}:${hashedIp}`
 
-      return store.transaction(() => {
-        store.deleteExpired(resolvedTime.seconds)
+      cleanupExpiredQuota(store, resolvedTime.seconds)
 
+      return store.transaction(() => {
         const deviceRecord = readCounter(store.get(deviceKey), DEVICE_LIMIT, false)
         if ((deviceRecord?.count ?? 0) >= DEVICE_LIMIT) {
           throw new QuotaError('QUOTA_EXHAUSTED')
