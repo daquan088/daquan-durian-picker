@@ -7,6 +7,43 @@ import { AppError } from '../../src/lib/api'
 import type { ProcessedImage } from '../../src/lib/imageProcessing'
 
 describe('App quota loading', () => {
+  it('revokes a delayed overview image exactly once and never analyzes it after unmount', async () => {
+    const user = userEvent.setup()
+    let resolveImage!: (image: ProcessedImage) => void
+    const staleImage: ProcessedImage = { blob: new Blob(), dataUrl: 'data:image/jpeg;base64,STALE', width: 10, height: 10, previewUrl: 'blob:stale', revoke: vi.fn() }
+    const overviewLoader = vi.fn()
+    const { container, unmount } = render(<App quotaLoader={async () => ({ remaining: 2 })} overviewImageProcessor={() => new Promise((resolve) => { resolveImage = resolve })} overviewLoader={overviewLoader} />)
+    vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined)
+    await user.click(await screen.findByRole('button', { name: '拍照开始选榴莲' }))
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [new File(['x'], 'one.jpg', { type: 'image/jpeg' })] } })
+    unmount()
+    await act(async () => resolveImage(staleImage))
+    expect(staleImage.revoke).toHaveBeenCalledTimes(1)
+    expect(overviewLoader).not.toHaveBeenCalled()
+  })
+
+  it('invalidates delayed overview processing when reset and when a newer file is selected', async () => {
+    const user = userEvent.setup()
+    const resolvers: Array<(image: ProcessedImage) => void> = []
+    const first: ProcessedImage = { blob: new Blob(), dataUrl: 'data:image/jpeg;base64,FIRST', width: 10, height: 10, previewUrl: 'blob:first', revoke: vi.fn() }
+    const second: ProcessedImage = { blob: new Blob(), dataUrl: 'data:image/jpeg;base64,SECOND', width: 10, height: 10, previewUrl: 'blob:second', revoke: vi.fn() }
+    const overviewLoader = vi.fn(() => new Promise<never>(() => undefined))
+    const { container } = render(<App quotaLoader={async () => ({ remaining: 2 })} overviewImageProcessor={() => new Promise((resolve) => { resolvers.push(resolve) })} overviewLoader={overviewLoader} />)
+    vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined)
+    await user.click(await screen.findByRole('button', { name: '拍照开始选榴莲' }))
+    const picker = container.querySelector('input[type="file"]')!
+    fireEvent.change(picker, { target: { files: [new File(['1'], 'one.jpg', { type: 'image/jpeg' })] } })
+    fireEvent.change(picker, { target: { files: [new File(['2'], 'two.jpg', { type: 'image/jpeg' })] } })
+    expect(resolvers).toHaveLength(2)
+    await act(async () => resolvers[0]!(first))
+    expect(first.revoke).toHaveBeenCalledTimes(1)
+    expect(overviewLoader).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '返回首页' }))
+    await act(async () => resolvers[1]!(second))
+    expect(second.revoke).toHaveBeenCalledTimes(1)
+    expect(overviewLoader).not.toHaveBeenCalled()
+  })
+
   it('opens the hidden overview file picker from the home CTA, retains one key for retry, and does not interrupt the fifth completed task', async () => {
     const user = userEvent.setup()
     const processed: ProcessedImage = { blob: new Blob(), dataUrl: 'data:image/jpeg;base64,AAA', width: 100, height: 100, previewUrl: 'blob:overview', revoke: vi.fn() }

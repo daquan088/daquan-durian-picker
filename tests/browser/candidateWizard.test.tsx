@@ -9,6 +9,40 @@ function processed(id: string): ProcessedImage { return { blob: new Blob(), data
 const file = new File(['jpeg'], 'test.jpg', { type: 'image/jpeg' })
 
 describe('CandidateWizard', () => {
+  it('revokes a delayed candidate image without updating after back or unmount', async () => {
+    let resolveImage!: (image: ProcessedImage) => void
+    const stale = processed('stale')
+    const onBack = vi.fn()
+    const { unmount } = render(<CandidateWizard selectedIds={[1]} taskToken="task" imageProcessor={() => new Promise((resolve) => { resolveImage = resolve })} submit={vi.fn()} onSuccess={vi.fn()} onBack={onBack} />)
+    fireEvent.change(document.getElementById('capture-1-stem')!, { target: { files: [file] } })
+    fireEvent.click(screen.getByRole('button', { name: '返回初筛结果' }))
+    expect(onBack).toHaveBeenCalledTimes(1)
+    unmount()
+    await Promise.resolve().then(() => resolveImage(stale))
+    await waitFor(() => expect(stale.revoke).toHaveBeenCalledTimes(1))
+    expect(screen.queryByAltText('1号果柄预览')).toBeNull()
+  })
+
+  it('keeps only the newest same-slot processing result and never binds it to another candidate', async () => {
+    const resolvers: Array<(image: ProcessedImage) => void> = []
+    const oldImage = processed('old')
+    const newImage = processed('new')
+    render(<CandidateWizard selectedIds={[1, 2]} taskToken="task" imageProcessor={() => new Promise((resolve) => { resolvers.push(resolve) })} submit={vi.fn()} onSuccess={vi.fn()} onBack={vi.fn()} />)
+    const input = document.getElementById('capture-1-stem')!
+    fireEvent.change(input, { target: { files: [file] } })
+    fireEvent.change(input, { target: { files: [file] } })
+    expect(resolvers).toHaveLength(2)
+    await Promise.resolve().then(() => resolvers[1]!(newImage))
+    await waitFor(() => expect(screen.getByAltText('1号果柄预览').getAttribute('src')).toBe('blob:new'))
+    await Promise.resolve().then(() => resolvers[0]!(oldImage))
+    await waitFor(() => expect(oldImage.revoke).toHaveBeenCalledTimes(1))
+    expect(newImage.revoke).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('tab', { name: '2号' }))
+    expect(screen.queryByAltText('2号果柄预览')).toBeNull()
+    await userEvent.click(screen.getByRole('tab', { name: '1号' }))
+    expect(screen.getByAltText('1号果柄预览').getAttribute('src')).toBe('blob:new')
+  })
+
   it('requires the three fixed views for every candidate and sends photos under their correct candidate IDs', async () => {
     const user = userEvent.setup()
     let count = 0

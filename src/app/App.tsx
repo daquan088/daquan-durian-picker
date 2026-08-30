@@ -68,10 +68,13 @@ export function App({ quotaLoader = requestQuota, overviewLoader = requestOvervi
     return () => {
       mountedRef.current = false
       requestSequenceRef.current += 1
+      analysisSequenceRef.current += 1
       activeControllerRef.current?.abort()
       analysisControllerRef.current?.abort()
       overviewImageRef.current?.revoke()
+      overviewImageRef.current = null
       activeControllerRef.current = null
+      analysisControllerRef.current = null
     }
   }, [loadQuota])
 
@@ -93,34 +96,36 @@ export function App({ quotaLoader = requestQuota, overviewLoader = requestOvervi
     dispatch({ type: 'RESET' })
   }, [remaining])
   const runOverview = useCallback(async (file?: File) => {
-    if (!file || overviewBusy) return
+    if (!file) return
     const sequence = ++analysisSequenceRef.current
+    const idempotencyKey = createIdempotencyKey()
     analysisControllerRef.current?.abort()
+    analysisControllerRef.current = null
     overviewImageRef.current?.revoke(); overviewImageRef.current = null
-    setOverviewImage(null); setOverviewError(null); setOverviewBusy(true); overviewKeyRef.current = createIdempotencyKey()
+    setOverviewImage(null); setOverviewError(null); setOverviewBusy(true); overviewKeyRef.current = idempotencyKey
     try {
       const image = await overviewImageProcessor(file)
-      if (sequence !== analysisSequenceRef.current) { image.revoke(); return }
+      if (!mountedRef.current || sequence !== analysisSequenceRef.current) { image.revoke(); return }
       overviewImageRef.current = image; setOverviewImage(image)
       const controller = new AbortController(); analysisControllerRef.current = controller
-      const overview = await overviewLoader({ image: image.dataUrl }, { signal: controller.signal, idempotencyKey: overviewKeyRef.current })
-      if (sequence !== analysisSequenceRef.current) return
+      const overview = await overviewLoader({ image: image.dataUrl }, { signal: controller.signal, idempotencyKey })
+      if (!mountedRef.current || sequence !== analysisSequenceRef.current) return
       setRemaining(overview.remaining)
       dispatch({ type: 'OVERVIEW_SUCCESS', payload: overview })
     } catch (error) {
-      if (sequence !== analysisSequenceRef.current || (error instanceof DOMException && error.name === 'AbortError')) return
+      if (!mountedRef.current || sequence !== analysisSequenceRef.current || (error instanceof DOMException && error.name === 'AbortError')) return
       if (isAppError(error) && error.code === 'QUOTA_EXHAUSTED') setQuotaModalOpen(true)
       setOverviewError(isAppError(error) ? error.message : error instanceof Error ? error.message : '图片分析失败，请重试。')
-    } finally { if (sequence === analysisSequenceRef.current) setOverviewBusy(false) }
-  }, [overviewBusy, overviewImageProcessor, overviewLoader])
+    } finally { if (mountedRef.current && sequence === analysisSequenceRef.current) setOverviewBusy(false) }
+  }, [overviewImageProcessor, overviewLoader])
   const retryOverview = useCallback(() => {
     const image = overviewImageRef.current
     if (!image || overviewBusy || !overviewKeyRef.current) return
     const sequence = ++analysisSequenceRef.current; setOverviewBusy(true); setOverviewError(null)
     const controller = new AbortController(); analysisControllerRef.current?.abort(); analysisControllerRef.current = controller
     void overviewLoader({ image: image.dataUrl }, { signal: controller.signal, idempotencyKey: overviewKeyRef.current }).then((overview) => {
-      if (sequence !== analysisSequenceRef.current) return; setRemaining(overview.remaining); dispatch({ type: 'OVERVIEW_SUCCESS', payload: overview })
-    }).catch((error: unknown) => { if (sequence === analysisSequenceRef.current && !(error instanceof DOMException && error.name === 'AbortError')) { if (isAppError(error) && error.code === 'QUOTA_EXHAUSTED') setQuotaModalOpen(true); setOverviewError(isAppError(error) ? error.message : '图片分析失败，请重试。') } }).finally(() => { if (sequence === analysisSequenceRef.current) setOverviewBusy(false) })
+      if (!mountedRef.current || sequence !== analysisSequenceRef.current) return; setRemaining(overview.remaining); dispatch({ type: 'OVERVIEW_SUCCESS', payload: overview })
+    }).catch((error: unknown) => { if (mountedRef.current && sequence === analysisSequenceRef.current && !(error instanceof DOMException && error.name === 'AbortError')) { if (isAppError(error) && error.code === 'QUOTA_EXHAUSTED') setQuotaModalOpen(true); setOverviewError(isAppError(error) ? error.message : '图片分析失败，请重试。') } }).finally(() => { if (mountedRef.current && sequence === analysisSequenceRef.current) setOverviewBusy(false) })
   }, [overviewBusy, overviewLoader])
 
   useEffect(() => {
