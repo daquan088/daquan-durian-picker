@@ -6,7 +6,9 @@ export const overviewPrompt = `你正在进行泰国金枕（Thai Monthong）榴
 
 严禁推断、声称或暗示：气味、敲击声音、重量、甜度、果肉/果肉比例、生果或死果、任何内部变质或内部状况。严禁保证、诊断、编造照片中不存在的观察。appearance_score 不适用于本阶段；后续如使用它，也只能表示当前候选之间的相对外观排序，绝不是概率、准确度或内部品质。
 
-若没有榴莲、照片严重模糊，或黑暗到无法使用：processable=false，fruits=[]。若可见榴莲数量超过 20：too_many=true、processable=false、fruits=[]。其他情况下按照片可见程度如实填写。
+若没有榴莲、照片严重模糊，或黑暗到无法使用：processable=false，fruits=[]。若可见榴莲数量超过 20：too_many=true、processable=false，fruits=[]。其他情况下按照片可见程度如实填写。明显切开、只露出局部残片、严重遮挡或不能确认是完整单颗榴莲的目标不得放入 fruits，也不得编号；宁可省略，不要猜测补全。
+
+box_2d 必须严格使用归一化坐标 [y_min, x_min, y_max, x_max]，四个值均为 0 到 1000；必须满足 y_max > y_min 且 x_max > x_min。严禁返回 [x, y, width, height]、像素坐标或颠倒边界。若无法给出有效边界框，就省略该目标。
 
 应用程序负责给水果编号和 ID；你不得返回编号或 ID。你只能返回每个果实的 box_2d、status、可见证据、风险、可见度与证据强度。所有 evidence 和 risks 必须是照片中可见的外观事实；看不清时使用 insufficient 或在 warnings 中说明。`
 

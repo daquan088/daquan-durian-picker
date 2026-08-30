@@ -160,7 +160,7 @@ async function requestResponse<T>(request: StructuredRequest<T>, isRetry: boolea
             type: 'json_schema',
             name: request.schemaName,
             strict: true,
-            schema: z.toJSONSchema(request.schema),
+            schema: providerCompatibleJsonSchema(request.schema),
           },
         },
       }),
@@ -187,6 +187,35 @@ async function requestResponse<T>(request: StructuredRequest<T>, isRetry: boolea
 function endpointFor(env: OpenAIResponsesClientEnvironment): string {
   const baseUrl = (env.OPENAI_BASE_URL || DEFAULT_OPENAI_BASE_URL).replace(/\/+$/, '')
   return `${baseUrl}/responses`
+}
+
+function providerCompatibleJsonSchema(schema: z.ZodType): unknown {
+  return normalizeJsonSchema(z.toJSONSchema(schema))
+}
+
+function normalizeJsonSchema(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeJsonSchema)
+  if (!isRecord(value)) return value
+
+  const normalized = Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [key, normalizeJsonSchema(child)]),
+  )
+  const { prefixItems } = normalized
+  if (normalized.type !== 'array' || !Array.isArray(prefixItems) || prefixItems.length === 0) {
+    return normalized
+  }
+
+  const [firstItem] = prefixItems
+  const firstItemJson = JSON.stringify(firstItem)
+  if (!prefixItems.every((item) => JSON.stringify(item) === firstItemJson)) {
+    throw new ModelOutputError()
+  }
+
+  normalized.items = firstItem
+  normalized.minItems = prefixItems.length
+  normalized.maxItems = prefixItems.length
+  delete normalized.prefixItems
+  return normalized
 }
 
 function extractAssistantOutputText(response: unknown): string {

@@ -94,7 +94,17 @@ describe('OpenAI Responses client', () => {
       expect.objectContaining({ type: 'input_text' }),
       { type: 'input_image', image_url: image, detail: 'original' },
     ]))
+    expect(body.input[0].content[0].text).toContain('[y_min, x_min, y_max, x_max]')
+    expect(body.input[0].content[0].text).toContain('明显切开')
     expect(body.text.format.schema).toBeTypeOf('object')
+    const boxSchema = body.text.format.schema.properties.fruits.items.properties.box_2d
+    expect(boxSchema).toMatchObject({
+      type: 'array',
+      minItems: 4,
+      maxItems: 4,
+      items: { type: 'number', minimum: 0, maximum: 1000 },
+    })
+    expect(boxSchema.prefixItems).toBeUndefined()
   })
 
   it('returns validated candidate output and passes all supplied images unchanged', async () => {
