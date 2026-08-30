@@ -18,6 +18,7 @@ import {
   jsonSuccess,
   readClientIp,
   readDeviceId,
+  readIdempotencyKey,
   readJsonObject,
   safeError,
   type AppDependencies,
@@ -34,10 +35,27 @@ export async function handleOverview(request: Request, dependencies: OverviewDep
   try {
     assertRequestOrigin(request, true)
     const deviceId = readDeviceId(request)
+    const idempotencyKey = readIdempotencyKey(request)
     const ipAddress = readClientIp(request)
     const body = await readJsonObject(request)
     assertExactKeys(body, ['image'])
     const image = validateImage(body.image)
+
+    const [deviceHash, ipHash, idempotencyHash, payloadHash] = await Promise.all([
+      hashValue(dependencies.env.QUOTA_SALT, deviceId),
+      hashValue(dependencies.env.QUOTA_SALT, ipAddress),
+      hashValue(dependencies.env.QUOTA_SALT, idempotencyKey),
+      hashValue(dependencies.env.QUOTA_SALT, JSON.stringify(body)),
+    ])
+    const operationKeyHash = await hashValue(dependencies.env.QUOTA_SALT, `${deviceHash}:${idempotencyHash}`)
+    try {
+      await dependencies.quota.beginOverview({ keyHash: operationKeyHash, payloadHash })
+    } catch (error) {
+      throw mapQuotaError(error)
+    }
+    let claimed = true
+
+    try {
 
     const remaining = await dependencies.quota.getRemaining(deviceId)
     if (remaining === 0) {
@@ -74,9 +92,11 @@ export async function handleOverview(request: Request, dependencies: OverviewDep
     }
 
     let taskToken: string
+    let taskId: string
     try {
+      taskId = dependencies.randomUUID()
       taskToken = await signTaskToken({
-        taskId: dependencies.randomUUID(),
+        taskId,
         deviceHash: await hashValue(dependencies.env.QUOTA_SALT, deviceId),
         allowedIds: shortlistIds,
         exp: nowSeconds + 2 * 60 * 60,
@@ -87,7 +107,14 @@ export async function handleOverview(request: Request, dependencies: OverviewDep
 
     let reservation: { remaining: number }
     try {
-      reservation = await dependencies.quota.reserve(deviceId, ipAddress)
+      reservation = await dependencies.quota.commitOverview({
+        keyHash: operationKeyHash,
+        payloadHash,
+        deviceHash,
+        ipHash,
+        taskHash: await hashValue(dependencies.env.QUOTA_SALT, taskId),
+      })
+      claimed = false
     } catch (error) {
       throw mapQuotaError(error)
     }
@@ -102,6 +129,16 @@ export async function handleOverview(request: Request, dependencies: OverviewDep
       remaining: reservation.remaining,
     }
     return jsonSuccess(data)
+    } catch (error) {
+      if (claimed) {
+        try {
+          await dependencies.quota.releaseOverview({ keyHash: operationKeyHash, payloadHash })
+        } catch {
+          // A lease bounds retained processing state; do not replace the original safe error.
+        }
+      }
+      throw error
+    }
   } catch (error) {
     return safeError(error)
   }
@@ -139,7 +176,25 @@ export function validateImage(value: unknown): string {
   if (decoded.length === 0 || decoded.length > MAX_IMAGE_BYTES) {
     throw new HttpError(413, 'IMAGE_TOO_LARGE', '图片超过大小限制。')
   }
+  if (!matchesImageMagic(mime, decoded)) {
+    throw new HttpError(400, 'INVALID_IMAGE', '图片数据无效。')
+  }
   return value
+}
+
+function matchesImageMagic(mime: string, bytes: string): boolean {
+  const byteAt = (index: number) => bytes.charCodeAt(index)
+  if (mime === 'image/jpeg') {
+    return bytes.length >= 3 && byteAt(0) === 0xff && byteAt(1) === 0xd8 && byteAt(2) === 0xff
+  }
+  if (mime === 'image/png') {
+    return bytes.length >= 8 &&
+      byteAt(0) === 0x89 && byteAt(1) === 0x50 && byteAt(2) === 0x4e && byteAt(3) === 0x47 &&
+      byteAt(4) === 0x0d && byteAt(5) === 0x0a && byteAt(6) === 0x1a && byteAt(7) === 0x0a
+  }
+  return bytes.length >= 12 &&
+    byteAt(0) === 0x52 && byteAt(1) === 0x49 && byteAt(2) === 0x46 && byteAt(3) === 0x46 &&
+    byteAt(8) === 0x57 && byteAt(9) === 0x45 && byteAt(10) === 0x42 && byteAt(11) === 0x50
 }
 
 function numberFruits(fruits: readonly OverviewFruit[]): NumberedFruitAssessment[] {
@@ -164,6 +219,7 @@ function mapQuotaError(error: unknown): HttpError {
   if (error instanceof QuotaError) {
     if (error.code === 'QUOTA_EXHAUSTED') return new HttpError(429, error.code, '体验次数已用完。')
     if (error.code === 'IP_RATE_LIMIT') return new HttpError(429, error.code, '当前网络请求过于频繁。')
+    if (error.code === 'OPERATION_CONFLICT') return new HttpError(409, 'INVALID_REQUEST', '请求已处理或正在处理。')
     if (error.code === 'INVALID_REQUEST') return new HttpError(400, error.code, '请求参数无效。')
   }
   return new HttpError(500, 'INTERNAL_ERROR', '服务暂时无法处理请求。')

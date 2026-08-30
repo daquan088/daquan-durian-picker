@@ -1,5 +1,6 @@
 import { finalRankingSchema } from '../../shared/contracts'
 import { OpenAIClientError, type CandidateImageInput } from '../openai/client'
+import { QuotaError } from '../quota/quotaService'
 import { hashValue } from '../security/hash'
 import { assertCandidateAllowed, verifyTaskToken } from '../security/taskToken'
 import {
@@ -8,18 +9,20 @@ import {
   assertRequestOrigin,
   jsonSuccess,
   readDeviceId,
+  readIdempotencyKey,
   readJsonObject,
   safeError,
   type AppDependencies,
 } from '../http'
 import { validateImage } from './overview'
 
-type CandidateDependencies = Required<Pick<AppDependencies, 'env' | 'ai' | 'now'>>
+type CandidateDependencies = Required<Pick<AppDependencies, 'env' | 'ai' | 'quota' | 'now'>>
 
 export async function handleCandidates(request: Request, dependencies: CandidateDependencies): Promise<Response> {
   try {
     assertRequestOrigin(request, true)
     const deviceId = readDeviceId(request)
+    const idempotencyKey = readIdempotencyKey(request)
     const body = await readJsonObject(request)
     assertExactKeys(body, ['taskToken', 'candidates'])
     if (typeof body.taskToken !== 'string' || body.taskToken.length === 0 || body.taskToken.length > 4096) {
@@ -38,6 +41,18 @@ export async function handleCandidates(request: Request, dependencies: Candidate
       throw new HttpError(403, 'INVALID_TASK', '任务无效或已过期。')
     }
 
+    const [taskHash, payloadHash] = await Promise.all([
+      hashValue(dependencies.env.QUOTA_SALT, task.taskId),
+      hashValue(dependencies.env.QUOTA_SALT, JSON.stringify({ idempotencyKey, candidates })),
+    ])
+    try {
+      await dependencies.quota.beginCandidate({ taskHash, payloadHash })
+    } catch (error) {
+      throw mapCoordinatorError(error)
+    }
+    let claimed = true
+    try {
+
     let result: unknown
     try {
       result = await dependencies.ai.analyzeCandidates({ candidates, signal: request.signal })
@@ -48,10 +63,33 @@ export async function handleCandidates(request: Request, dependencies: Candidate
     if (!parsed.success || parsed.data.ranking.some(({ candidate_id }) => !candidates.some((candidate) => candidate.candidate_id === candidate_id))) {
       throw new HttpError(502, 'MODEL_OUTPUT_INVALID', 'AI 返回的结果无效。')
     }
+    try {
+      await dependencies.quota.completeCandidate({ taskHash, payloadHash })
+      claimed = false
+    } catch (error) {
+      throw mapCoordinatorError(error)
+    }
     return jsonSuccess({ variety: 'thai-monthong', result: parsed.data })
+    } catch (error) {
+      if (claimed) {
+        try {
+          await dependencies.quota.releaseCandidate({ taskHash, payloadHash })
+        } catch {
+          // A lease bounds retained processing state; preserve the original safe error.
+        }
+      }
+      throw error
+    }
   } catch (error) {
     return safeError(error)
   }
+}
+
+function mapCoordinatorError(error: unknown): HttpError {
+  if (error instanceof QuotaError && error.code === 'OPERATION_CONFLICT') {
+    return new HttpError(409, 'INVALID_TASK', '任务已处理或正在处理。')
+  }
+  return new HttpError(500, 'INTERNAL_ERROR', '服务暂时无法处理请求。')
 }
 
 function parseCandidates(value: unknown): CandidateImageInput[] {

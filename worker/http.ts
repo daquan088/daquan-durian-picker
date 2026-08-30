@@ -8,6 +8,8 @@ import type { Env } from './env'
 export const MAX_REQUEST_BODY_BYTES = 25 * 1024 * 1024
 /** Browser-generated canonical UUID required on every API request, including GET /api/quota. */
 export const DEVICE_ID_HEADER = 'x-device-id'
+/** Browser-generated canonical UUID required once per POST action and reused for transport retries. */
+export const IDEMPOTENCY_KEY_HEADER = 'x-idempotency-key'
 
 const JSON_HEADERS = {
   'cache-control': 'no-store',
@@ -21,6 +23,12 @@ const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}
 export interface QuotaCoordinatorClient {
   getRemaining(deviceId: string): Promise<number>
   reserve(deviceId: string, ipAddress: string): Promise<{ remaining: number }>
+  beginOverview(input: { keyHash: string; payloadHash: string }): Promise<void>
+  releaseOverview(input: { keyHash: string; payloadHash: string }): Promise<void>
+  commitOverview(input: { keyHash: string; payloadHash: string; deviceHash: string; ipHash: string; taskHash: string }): Promise<{ remaining: number }>
+  beginCandidate(input: { taskHash: string; payloadHash: string }): Promise<void>
+  releaseCandidate(input: { taskHash: string; payloadHash: string }): Promise<void>
+  completeCandidate(input: { taskHash: string; payloadHash: string }): Promise<void>
 }
 
 export interface AppDependencies {
@@ -73,6 +81,14 @@ export function readDeviceId(request: Request): string {
   return deviceId
 }
 
+export function readIdempotencyKey(request: Request): string {
+  const key = request.headers.get(IDEMPOTENCY_KEY_HEADER)
+  if (key === null || !UUID_V4_PATTERN.test(key)) {
+    throw new HttpError(400, 'INVALID_REQUEST', '幂等请求标识无效。')
+  }
+  return key
+}
+
 export function readClientIp(request: Request): string {
   const ipAddress = request.headers.get('cf-connecting-ip')
   if (ipAddress === null || ipAddress.length === 0 || ipAddress.length > 128) {
@@ -90,6 +106,7 @@ export async function readJsonObject(request: Request): Promise<Record<string, u
   const contentLength = request.headers.get('content-length')
   if (contentLength !== null) {
     if (!/^(?:0|[1-9]\d*)$/.test(contentLength) || Number(contentLength) > MAX_REQUEST_BODY_BYTES) {
+      await cancelRequestBody(request, 'request body exceeds the maximum size')
       throw new HttpError(413, 'IMAGE_TOO_LARGE', '请求内容超过大小限制。')
     }
   }
@@ -110,6 +127,13 @@ export async function readJsonObject(request: Request): Promise<Record<string, u
         text += decoder.decode(value, { stream: true })
       }
       text += decoder.decode()
+    } catch (error) {
+      try {
+        await reader.cancel(error)
+      } catch {
+        // The request is already failing; cancellation errors are not client-visible.
+      }
+      throw error
     } finally {
       reader.releaseLock()
     }
@@ -125,6 +149,14 @@ export async function readJsonObject(request: Request): Promise<Record<string, u
     throw new HttpError(400, 'INVALID_REQUEST', '请求参数无效。')
   }
   return parsed as Record<string, unknown>
+}
+
+async function cancelRequestBody(request: Request, reason: string): Promise<void> {
+  try {
+    await request.body?.cancel(reason)
+  } catch {
+    // The response remains a size error even if the transport is already closed.
+  }
 }
 
 export function assertExactKeys(value: Record<string, unknown>, expectedKeys: readonly string[]): void {
@@ -168,7 +200,7 @@ export function createApp(dependencies: AppDependencies) {
           return await handleOverview(request, { env, ai: getAi(), quota: getQuota(), now, randomUUID })
         }
         if (request.method === 'POST' && url.pathname === '/api/analyze-candidates') {
-          return await handleCandidates(request, { env, ai: getAi(), now })
+          return await handleCandidates(request, { env, ai: getAi(), quota: getQuota(), now })
         }
         return jsonError(404, 'NOT_FOUND', '请求地址不存在。')
       } catch (error) {

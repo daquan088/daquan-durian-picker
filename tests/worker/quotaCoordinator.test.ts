@@ -109,6 +109,30 @@ describe('quotaCoordinator client', () => {
     await expect(client.getRemaining('device-123')).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
   })
 
+  it('sends idempotency state operations using only salted hashes and numeric metadata', async () => {
+    const hash = 'a'.repeat(64)
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(Response.json({ ok: true }))
+      .mockResolvedValueOnce(Response.json({ ok: true, remaining: 4 }))
+      .mockResolvedValueOnce(Response.json({ ok: true }))
+    const client = createQuotaCoordinatorClient({
+      QUOTA_COORDINATOR: { getByName: () => ({ fetch }) },
+    } as never)
+
+    await client.beginOverview({ keyHash: hash, payloadHash: 'b'.repeat(64) })
+    await client.commitOverview({ keyHash: hash, payloadHash: 'b'.repeat(64), deviceHash: 'c'.repeat(64), ipHash: 'd'.repeat(64), taskHash: 'e'.repeat(64) })
+    await client.beginCandidate({ taskHash: 'e'.repeat(64), payloadHash: 'f'.repeat(64) })
+
+    const bodies = fetch.mock.calls.map(([, init]) => JSON.parse((init as RequestInit).body as string))
+    expect(bodies).toEqual([
+      { keyHash: hash, payloadHash: 'b'.repeat(64) },
+      { keyHash: hash, payloadHash: 'b'.repeat(64), deviceHash: 'c'.repeat(64), ipHash: 'd'.repeat(64), taskHash: 'e'.repeat(64) },
+      { taskHash: 'e'.repeat(64), payloadHash: 'f'.repeat(64) },
+    ])
+    expect(JSON.stringify(bodies)).not.toContain('data:image')
+    expect(JSON.stringify(bodies)).not.toContain('203.0.113')
+  })
+
   it('schedules an earlier expiry without replacing an already earlier alarm', async () => {
     const setAlarm = vi.fn().mockResolvedValue(undefined)
     const deleteAlarm = vi.fn().mockResolvedValue(undefined)

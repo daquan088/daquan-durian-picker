@@ -9,6 +9,7 @@ import { verifyTaskToken } from '../../worker/security/taskToken'
 const origin = 'https://picker.example'
 const deviceId = '123e4567-e89b-42d3-a456-426614174000'
 const otherDeviceId = '123e4567-e89b-42d3-a456-426614174001'
+const idempotencyKey = '123e4567-e89b-42d3-a456-426614174099'
 const image = 'data:image/jpeg;base64,/9j/4AAQSkZJRg=='
 
 const overview = {
@@ -46,9 +47,40 @@ function makeApp(options: {
       return options.candidateResult ?? ranking
     }),
   } satisfies OpenAIResponsesClient
+  const operations = new Map<string, { payloadHash: string; state: 'processing' | 'completed' }>()
+  const taskHashes = new Set<string>()
   const quota = {
     getRemaining: vi.fn().mockResolvedValue(options.remaining ?? 5),
     reserve: vi.fn().mockResolvedValue({ remaining: 4 }),
+    beginOverview: vi.fn(async ({ keyHash, payloadHash }: { keyHash: string; payloadHash: string }) => {
+      if (operations.has(keyHash)) throw new QuotaError('OPERATION_CONFLICT')
+      operations.set(keyHash, { payloadHash, state: 'processing' })
+    }),
+    releaseOverview: vi.fn(async ({ keyHash, payloadHash }: { keyHash: string; payloadHash: string }) => {
+      const operation = operations.get(keyHash)
+      if (operation?.state === 'processing' && operation.payloadHash === payloadHash) operations.delete(keyHash)
+    }),
+    commitOverview: vi.fn(async ({ keyHash, payloadHash, taskHash }: { keyHash: string; payloadHash: string; taskHash: string }) => {
+      const operation = operations.get(keyHash)
+      if (operation?.state !== 'processing' || operation.payloadHash !== payloadHash) throw new QuotaError('OPERATION_CONFLICT')
+      const result = await quota.reserve(deviceId, '203.0.113.7')
+      operation.state = 'completed'
+      taskHashes.add(taskHash)
+      return result
+    }),
+    beginCandidate: vi.fn(async ({ taskHash, payloadHash }: { taskHash: string; payloadHash: string }) => {
+      if (!taskHashes.has(taskHash) || operations.has(taskHash)) throw new QuotaError('OPERATION_CONFLICT')
+      operations.set(taskHash, { payloadHash, state: 'processing' })
+    }),
+    releaseCandidate: vi.fn(async ({ taskHash, payloadHash }: { taskHash: string; payloadHash: string }) => {
+      const operation = operations.get(taskHash)
+      if (operation?.state === 'processing' && operation.payloadHash === payloadHash) operations.delete(taskHash)
+    }),
+    completeCandidate: vi.fn(async ({ taskHash, payloadHash }: { taskHash: string; payloadHash: string }) => {
+      const operation = operations.get(taskHash)
+      if (operation?.state !== 'processing' || operation.payloadHash !== payloadHash) throw new QuotaError('OPERATION_CONFLICT')
+      operation.state = 'completed'
+    }),
   }
   const assets = { fetch: vi.fn().mockResolvedValue(new Response('asset')) }
   const app = createApp({
@@ -71,6 +103,7 @@ function apiRequest(path: string, body?: unknown, init: RequestInit = {}): Reque
   const headers = new Headers(init.headers)
   if (!headers.has('origin')) headers.set('origin', origin)
   if (!headers.has('x-device-id')) headers.set('x-device-id', deviceId)
+  if (!headers.has('x-idempotency-key')) headers.set('x-idempotency-key', idempotencyKey)
   if (!headers.has('cf-connecting-ip')) headers.set('cf-connecting-ip', '203.0.113.7')
   if (body !== undefined && !headers.has('content-type')) headers.set('content-type', 'application/json; charset=utf-8')
   return new Request(`${origin}${path}`, {
@@ -126,10 +159,28 @@ describe('secure analysis routes', () => {
     const { app, ai } = makeApp()
     const request = new Request(`${origin}/api/analyze-overview`, {
       method: 'POST',
-      headers: { origin, 'x-device-id': deviceId, 'cf-connecting-ip': '203.0.113.7', 'content-type': 'application/json', 'content-length': String(25 * 1024 * 1024 + 1) },
+      headers: { origin, 'x-device-id': deviceId, 'x-idempotency-key': idempotencyKey, 'cf-connecting-ip': '203.0.113.7', 'content-type': 'application/json', 'content-length': String(25 * 1024 * 1024 + 1) },
       body: JSON.stringify({ image }),
     })
     await expectError(await app.fetch(request), 413, 'IMAGE_TOO_LARGE')
+    expect(ai.analyzeOverview).not.toHaveBeenCalled()
+  })
+
+  it('cancels a declared oversized request body before returning 413', async () => {
+    const { app, ai } = makeApp()
+    const cancelled = vi.fn()
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { controller.enqueue(new Uint8Array(1)) },
+      cancel: cancelled,
+    })
+    const request = new Request(`${origin}/api/analyze-overview`, {
+      method: 'POST',
+      headers: { origin, 'x-device-id': deviceId, 'x-idempotency-key': idempotencyKey, 'cf-connecting-ip': '203.0.113.7', 'content-type': 'application/json', 'content-length': String(25 * 1024 * 1024 + 1) },
+      body,
+      duplex: 'half',
+    } as RequestInit)
+    await expectError(await app.fetch(request), 413, 'IMAGE_TOO_LARGE')
+    expect(cancelled).toHaveBeenCalledOnce()
     expect(ai.analyzeOverview).not.toHaveBeenCalled()
   })
 
@@ -149,7 +200,7 @@ describe('secure analysis routes', () => {
     })
     const request = new Request(`${origin}/api/analyze-overview`, {
       method: 'POST',
-      headers: { origin, 'x-device-id': deviceId, 'cf-connecting-ip': '203.0.113.7', 'content-type': 'application/json' },
+      headers: { origin, 'x-device-id': deviceId, 'x-idempotency-key': idempotencyKey, 'cf-connecting-ip': '203.0.113.7', 'content-type': 'application/json' },
       body,
       duplex: 'half',
     } as RequestInit)
@@ -159,11 +210,43 @@ describe('secure analysis routes', () => {
     expect(ai.analyzeOverview).not.toHaveBeenCalled()
   })
 
+  it('cancels an oversized streaming request after crossing the body limit', async () => {
+    const { app, ai } = makeApp()
+    const cancelled = vi.fn()
+    const chunk = new Uint8Array(1024 * 1024)
+    let emitted = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (emitted === 26) return controller.close()
+        emitted += 1
+        controller.enqueue(chunk)
+      },
+      cancel: cancelled,
+    })
+    const request = new Request(`${origin}/api/analyze-overview`, {
+      method: 'POST',
+      headers: { origin, 'x-device-id': deviceId, 'x-idempotency-key': idempotencyKey, 'cf-connecting-ip': '203.0.113.7', 'content-type': 'application/json' },
+      body,
+      duplex: 'half',
+    } as RequestInit)
+    await expectError(await app.fetch(request), 413, 'IMAGE_TOO_LARGE')
+    expect(cancelled).toHaveBeenCalledOnce()
+    expect(ai.analyzeOverview).not.toHaveBeenCalled()
+  })
+
   it('allows only JPEG, PNG, or WebP base64 data URLs', async () => {
     const { app, ai } = makeApp()
     await expectError(await app.fetch(apiRequest('/api/analyze-overview', { image: 'data:image/gif;base64,R0lGODlh' })), 415, 'UNSUPPORTED_MEDIA_TYPE')
     await expectError(await app.fetch(apiRequest('/api/analyze-overview', { image: 'data:image/png;base64,***' })), 400, 'INVALID_IMAGE')
     expect(ai.analyzeOverview).not.toHaveBeenCalled()
+  })
+
+  it('rejects MIME-spoofed and random image bytes before quota or AI preflight', async () => {
+    const { app, ai, quota } = makeApp()
+    await expectError(await app.fetch(apiRequest('/api/analyze-overview', { image: 'data:image/jpeg;base64,R0lGODlh' })), 400, 'INVALID_IMAGE')
+    await expectError(await app.fetch(apiRequest('/api/analyze-overview', { image: 'data:image/png;base64,AAAAAA==' })), 400, 'INVALID_IMAGE')
+    expect(ai.analyzeOverview).not.toHaveBeenCalled()
+    expect(quota.getRemaining).not.toHaveBeenCalled()
   })
 
   it('rejects four candidates and candidates that do not contain exactly three named views', async () => {
@@ -271,5 +354,52 @@ describe('secure analysis routes', () => {
     await expectError(await state.app.fetch(apiRequest('/api/analyze-overview', { image })), 429, 'QUOTA_EXHAUSTED')
     expect(ai.analyzeOverview).not.toHaveBeenCalled()
     expect(state.ai.analyzeOverview).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a repeated overview before a second AI call or quota reservation', async () => {
+    const { app, ai, quota } = makeApp()
+    expect((await app.fetch(apiRequest('/api/analyze-overview', { image }))).status).toBe(200)
+    await expectError(await app.fetch(apiRequest('/api/analyze-overview', { image })), 409, 'INVALID_REQUEST')
+    expect(ai.analyzeOverview).toHaveBeenCalledOnce()
+    expect(quota.reserve).toHaveBeenCalledOnce()
+  })
+
+  it('rejects concurrent overview attempts with the same idempotency key before AI', async () => {
+    let resolveOverview: ((value: typeof overview) => void) | undefined
+    const pending = new Promise<typeof overview>((resolve) => { resolveOverview = resolve })
+    const { app, ai, quota } = makeApp()
+    ai.analyzeOverview.mockReturnValueOnce(pending)
+    const first = app.fetch(apiRequest('/api/analyze-overview', { image }))
+    await vi.waitFor(() => expect(ai.analyzeOverview).toHaveBeenCalledOnce())
+    await expectError(await app.fetch(apiRequest('/api/analyze-overview', { image })), 409, 'INVALID_REQUEST')
+    resolveOverview!(overview)
+    expect((await first).status).toBe(200)
+    expect(quota.reserve).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a changed overview payload for an existing idempotency key', async () => {
+    const { app, ai, quota } = makeApp()
+    expect((await app.fetch(apiRequest('/api/analyze-overview', { image }))).status).toBe(200)
+    const changedImage = 'data:image/jpeg;base64,/9j/4AABSkZJRg=='
+    await expectError(await app.fetch(apiRequest('/api/analyze-overview', { image: changedImage })), 409, 'INVALID_REQUEST')
+    expect(ai.analyzeOverview).toHaveBeenCalledOnce()
+    expect(quota.reserve).toHaveBeenCalledOnce()
+  })
+
+  it('allows candidate provider failures to release the replay claim, then blocks a completed replay without quota', async () => {
+    const { app, ai, quota } = makeApp({ candidateError: new OpenAIClientError('PROVIDER_FAILURE') })
+    const overviewResponse = await app.fetch(apiRequest('/api/analyze-overview', { image }))
+    const token = (await overviewResponse.json() as { data: { taskToken: string } }).data.taskToken
+    const payload = { taskToken: token, candidates: [{ candidate_id: 2, stem: image, body: image, bottom: image }] }
+    await expectError(await app.fetch(apiRequest('/api/analyze-candidates', payload)), 502, 'PROVIDER_FAILURE')
+    ai.analyzeCandidates.mockResolvedValueOnce({ ...ranking, ranking: [{ ...ranking.ranking[0], candidate_id: 2 }] })
+    expect((await app.fetch(apiRequest('/api/analyze-candidates', payload))).status).toBe(200)
+    await expectError(await app.fetch(apiRequest('/api/analyze-candidates', payload)), 409, 'INVALID_TASK')
+    await expectError(await app.fetch(apiRequest('/api/analyze-candidates', {
+      ...payload,
+      candidates: [{ ...payload.candidates[0], stem: 'data:image/jpeg;base64,/9j/4AABSkZJRg==' }],
+    })), 409, 'INVALID_TASK')
+    expect(ai.analyzeCandidates).toHaveBeenCalledTimes(2)
+    expect(quota.reserve).toHaveBeenCalledOnce()
   })
 })

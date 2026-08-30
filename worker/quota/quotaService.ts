@@ -20,6 +20,7 @@ export type QuotaErrorCode =
   | 'INVALID_REQUEST'
   | 'QUOTA_EXHAUSTED'
   | 'IP_RATE_LIMIT'
+  | 'OPERATION_CONFLICT'
   | 'INTERNAL_ERROR'
 
 export class QuotaError extends Error {
@@ -92,6 +93,44 @@ function resolveTime(date: Date): { day: string; seconds: number } {
   }
 }
 
+function assertHash(value: string): void {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) {
+    throw new QuotaError('INVALID_REQUEST')
+  }
+}
+
+export function reserveHashedQuota(
+  store: QuotaCounterStore,
+  deviceHash: string,
+  ipHash: string,
+  now = new Date(),
+): { remaining: number } {
+  assertHash(deviceHash)
+  assertHash(ipHash)
+  const resolvedTime = resolveTime(now)
+  const deviceKey = `device:${deviceHash}`
+  const ipKey = `ip:${resolvedTime.day}:${ipHash}`
+
+  store.deleteExpired(resolvedTime.seconds)
+  const deviceRecord = readCounter(store.get(deviceKey), DEVICE_LIMIT, false)
+  if ((deviceRecord?.count ?? 0) >= DEVICE_LIMIT) {
+    throw new QuotaError('QUOTA_EXHAUSTED')
+  }
+
+  const ipRecord = readCounter(store.get(ipKey), IP_DAILY_LIMIT, true)
+  if ((ipRecord?.count ?? 0) >= IP_DAILY_LIMIT) {
+    throw new QuotaError('IP_RATE_LIMIT')
+  }
+
+  const nextDeviceCount = (deviceRecord?.count ?? 0) + 1
+  store.put(deviceKey, { count: nextDeviceCount, expiresAt: null })
+  store.put(ipKey, {
+    count: (ipRecord?.count ?? 0) + 1,
+    expiresAt: resolvedTime.seconds + IP_RETENTION_SECONDS,
+  })
+  return { remaining: DEVICE_LIMIT - nextDeviceCount }
+}
+
 export function createQuotaService(store: QuotaCounterStore, salt: string) {
   if (typeof salt !== 'string' || salt.length === 0) {
     throw new QuotaError('INVALID_REQUEST')
@@ -112,36 +151,12 @@ export function createQuotaService(store: QuotaCounterStore, salt: string) {
       assertIdentifier(deviceId)
       assertIdentifier(ipAddress)
       const resolvedTime = resolveTime(now)
-
       const [hashedDevice, hashedIp] = await Promise.all([
         hashValue(salt, deviceId),
         hashValue(salt, ipAddress),
       ])
-      const deviceKey = `device:${hashedDevice}`
-      const ipKey = `ip:${resolvedTime.day}:${hashedIp}`
-
       cleanupExpiredQuota(store, resolvedTime.seconds)
-
-      return store.transaction(() => {
-        const deviceRecord = readCounter(store.get(deviceKey), DEVICE_LIMIT, false)
-        if ((deviceRecord?.count ?? 0) >= DEVICE_LIMIT) {
-          throw new QuotaError('QUOTA_EXHAUSTED')
-        }
-
-        const ipRecord = readCounter(store.get(ipKey), IP_DAILY_LIMIT, true)
-        if ((ipRecord?.count ?? 0) >= IP_DAILY_LIMIT) {
-          throw new QuotaError('IP_RATE_LIMIT')
-        }
-
-        const nextDeviceCount = (deviceRecord?.count ?? 0) + 1
-        store.put(deviceKey, { count: nextDeviceCount, expiresAt: null })
-        store.put(ipKey, {
-          count: (ipRecord?.count ?? 0) + 1,
-          expiresAt: resolvedTime.seconds + IP_RETENTION_SECONDS,
-        })
-
-        return { remaining: DEVICE_LIMIT - nextDeviceCount }
-      })
+      return store.transaction(() => reserveHashedQuota(store, hashedDevice, hashedIp, now))
     },
   }
 }
