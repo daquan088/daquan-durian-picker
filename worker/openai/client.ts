@@ -67,7 +67,7 @@ export interface OpenAIResponsesClient {
 }
 
 export function createOpenAIResponsesClient(options: OpenAIResponsesClientOptions): OpenAIResponsesClient {
-  const fetcher = options.fetch ?? fetch
+  const fetcher = options.fetch ?? ((input, init) => globalThis.fetch(input, init))
 
   return {
     analyzeOverview: ({ images, signal }) => requestStructuredOutput({

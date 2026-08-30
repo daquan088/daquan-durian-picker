@@ -64,9 +64,22 @@ function expectCode(error: unknown, code: string) {
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.unstubAllGlobals()
 })
 
 describe('OpenAI Responses client', () => {
+  it('preserves the global fetch receiver required by Cloudflare Workers', async () => {
+    const strictGlobalFetch = vi.fn(function (this: unknown) {
+      expect(this).toBe(globalThis)
+      return Promise.resolve(assistantResponse(overviewFixture))
+    })
+    vi.stubGlobal('fetch', strictGlobalFetch)
+    const client = createOpenAIResponsesClient({ env })
+
+    await expect(client.analyzeOverview({ images: [image] })).resolves.toEqual(overviewFixture)
+    expect(strictGlobalFetch).toHaveBeenCalledOnce()
+  })
+
   it('returns validated overview output and sends the required strict Responses request body', async () => {
     const { client, fetch } = makeClient([assistantResponse(overviewFixture)])
 
