@@ -51,4 +51,10 @@ describe('appReducer', () => {
 
     expect(next.selectedCandidateIds).toEqual([1, 2])
   })
+
+  it('returns from the candidate camera to the existing shortlist without losing the task', () => {
+    const shortlist = toShortlist()
+    const capture = appReducer(shortlist, { type: 'SELECT_CANDIDATES', ids: [1] })
+    expect(appReducer(capture, { type: 'BACK_TO_SHORTLIST' })).toMatchObject({ screen: 'shortlist', overview: overviewPayload })
+  })
 })

@@ -13,6 +13,7 @@ export type AppAction =
   | { type: 'START_OVERVIEW' }
   | { type: 'OVERVIEW_SUCCESS'; payload: OverviewSuccessPayload }
   | { type: 'SELECT_CANDIDATES'; ids: readonly number[] }
+  | { type: 'BACK_TO_SHORTLIST' }
   | { type: 'CANDIDATES_SUCCESS'; payload: FinalRankingSuccessPayload }
   | { type: 'RESET' }
 
@@ -55,7 +56,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'OVERVIEW_SUCCESS':
       return state.screen === 'overview'
-        ? { screen: 'shortlist', overview: copyOverview(action.payload), selectedCandidateIds: [], finalResult: null }
+        ? {
+            screen: 'shortlist',
+            overview: copyOverview(action.payload),
+            selectedCandidateIds: action.payload.shortlist_ids.slice(0, 3),
+            finalResult: null,
+          }
         : state
 
     case 'SELECT_CANDIDATES': {
@@ -69,6 +75,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'CANDIDATES_SUCCESS':
       return state.screen === 'capture' && state.selectedCandidateIds.length > 0
         ? { ...state, screen: 'final', finalResult: copyFinalResult(action.payload) }
+        : state
+
+    case 'BACK_TO_SHORTLIST':
+      return state.screen === 'capture' && state.overview !== null
+        ? { ...state, screen: 'shortlist' }
         : state
 
     case 'RESET':
