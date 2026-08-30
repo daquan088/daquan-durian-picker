@@ -47,22 +47,24 @@ function makeApp(options: {
       return options.candidateResult ?? ranking
     }),
   } satisfies OpenAIResponsesClient
-  const operations = new Map<string, { payloadHash: string; state: 'processing' | 'completed' }>()
+  const operations = new Map<string, { payloadHash: string; state: 'processing' | 'completed'; leaseId: string }>()
   const taskHashes = new Set<string>()
   const quota = {
     getRemaining: vi.fn().mockResolvedValue(options.remaining ?? 5),
     reserve: vi.fn().mockResolvedValue({ remaining: 4 }),
     beginOverview: vi.fn(async ({ keyHash, payloadHash }: { keyHash: string; payloadHash: string }) => {
       if (operations.has(keyHash)) throw new QuotaError('OPERATION_CONFLICT')
-      operations.set(keyHash, { payloadHash, state: 'processing' })
+      const leaseId = '123e4567-e89b-42d3-a456-426614174098'
+      operations.set(keyHash, { payloadHash, state: 'processing', leaseId })
+      return { leaseId }
     }),
-    releaseOverview: vi.fn(async ({ keyHash, payloadHash }: { keyHash: string; payloadHash: string }) => {
+    releaseOverview: vi.fn(async ({ keyHash, payloadHash, leaseId }: { keyHash: string; payloadHash: string; leaseId: string }) => {
       const operation = operations.get(keyHash)
-      if (operation?.state === 'processing' && operation.payloadHash === payloadHash) operations.delete(keyHash)
+      if (operation?.state === 'processing' && operation.payloadHash === payloadHash && operation.leaseId === leaseId) operations.delete(keyHash)
     }),
-    commitOverview: vi.fn(async ({ keyHash, payloadHash, taskHash }: { keyHash: string; payloadHash: string; taskHash: string }) => {
+    commitOverview: vi.fn(async ({ keyHash, payloadHash, taskHash, leaseId }: { keyHash: string; payloadHash: string; taskHash: string; leaseId: string }) => {
       const operation = operations.get(keyHash)
-      if (operation?.state !== 'processing' || operation.payloadHash !== payloadHash) throw new QuotaError('OPERATION_CONFLICT')
+      if (operation?.state !== 'processing' || operation.payloadHash !== payloadHash || operation.leaseId !== leaseId) throw new QuotaError('OPERATION_CONFLICT')
       const result = await quota.reserve(deviceId, '203.0.113.7')
       operation.state = 'completed'
       taskHashes.add(taskHash)
@@ -70,15 +72,17 @@ function makeApp(options: {
     }),
     beginCandidate: vi.fn(async ({ taskHash, payloadHash }: { taskHash: string; payloadHash: string }) => {
       if (!taskHashes.has(taskHash) || operations.has(taskHash)) throw new QuotaError('OPERATION_CONFLICT')
-      operations.set(taskHash, { payloadHash, state: 'processing' })
+      const leaseId = '123e4567-e89b-42d3-a456-426614174097'
+      operations.set(taskHash, { payloadHash, state: 'processing', leaseId })
+      return { leaseId }
     }),
-    releaseCandidate: vi.fn(async ({ taskHash, payloadHash }: { taskHash: string; payloadHash: string }) => {
+    releaseCandidate: vi.fn(async ({ taskHash, payloadHash, leaseId }: { taskHash: string; payloadHash: string; leaseId: string }) => {
       const operation = operations.get(taskHash)
-      if (operation?.state === 'processing' && operation.payloadHash === payloadHash) operations.delete(taskHash)
+      if (operation?.state === 'processing' && operation.payloadHash === payloadHash && operation.leaseId === leaseId) operations.delete(taskHash)
     }),
-    completeCandidate: vi.fn(async ({ taskHash, payloadHash }: { taskHash: string; payloadHash: string }) => {
+    completeCandidate: vi.fn(async ({ taskHash, payloadHash, leaseId }: { taskHash: string; payloadHash: string; leaseId: string }) => {
       const operation = operations.get(taskHash)
-      if (operation?.state !== 'processing' || operation.payloadHash !== payloadHash) throw new QuotaError('OPERATION_CONFLICT')
+      if (operation?.state !== 'processing' || operation.payloadHash !== payloadHash || operation.leaseId !== leaseId) throw new QuotaError('OPERATION_CONFLICT')
       operation.state = 'completed'
     }),
   }

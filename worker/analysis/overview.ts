@@ -48,8 +48,9 @@ export async function handleOverview(request: Request, dependencies: OverviewDep
       hashValue(dependencies.env.QUOTA_SALT, JSON.stringify(body)),
     ])
     const operationKeyHash = await hashValue(dependencies.env.QUOTA_SALT, `${deviceHash}:${idempotencyHash}`)
+    let leaseId: string
     try {
-      await dependencies.quota.beginOverview({ keyHash: operationKeyHash, payloadHash })
+      leaseId = (await dependencies.quota.beginOverview({ keyHash: operationKeyHash, payloadHash })).leaseId
     } catch (error) {
       throw mapQuotaError(error)
     }
@@ -110,6 +111,7 @@ export async function handleOverview(request: Request, dependencies: OverviewDep
       reservation = await dependencies.quota.commitOverview({
         keyHash: operationKeyHash,
         payloadHash,
+        leaseId,
         deviceHash,
         ipHash,
         taskHash: await hashValue(dependencies.env.QUOTA_SALT, taskId),
@@ -132,7 +134,7 @@ export async function handleOverview(request: Request, dependencies: OverviewDep
     } catch (error) {
       if (claimed) {
         try {
-          await dependencies.quota.releaseOverview({ keyHash: operationKeyHash, payloadHash })
+          await dependencies.quota.releaseOverview({ keyHash: operationKeyHash, payloadHash, leaseId })
         } catch {
           // A lease bounds retained processing state; do not replace the original safe error.
         }

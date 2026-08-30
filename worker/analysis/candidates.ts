@@ -45,8 +45,9 @@ export async function handleCandidates(request: Request, dependencies: Candidate
       hashValue(dependencies.env.QUOTA_SALT, task.taskId),
       hashValue(dependencies.env.QUOTA_SALT, JSON.stringify({ idempotencyKey, candidates })),
     ])
+    let leaseId: string
     try {
-      await dependencies.quota.beginCandidate({ taskHash, payloadHash })
+      leaseId = (await dependencies.quota.beginCandidate({ taskHash, payloadHash })).leaseId
     } catch (error) {
       throw mapCoordinatorError(error)
     }
@@ -64,7 +65,7 @@ export async function handleCandidates(request: Request, dependencies: Candidate
       throw new HttpError(502, 'MODEL_OUTPUT_INVALID', 'AI 返回的结果无效。')
     }
     try {
-      await dependencies.quota.completeCandidate({ taskHash, payloadHash })
+      await dependencies.quota.completeCandidate({ taskHash, payloadHash, leaseId })
       claimed = false
     } catch (error) {
       throw mapCoordinatorError(error)
@@ -73,7 +74,7 @@ export async function handleCandidates(request: Request, dependencies: Candidate
     } catch (error) {
       if (claimed) {
         try {
-          await dependencies.quota.releaseCandidate({ taskHash, payloadHash })
+          await dependencies.quota.releaseCandidate({ taskHash, payloadHash, leaseId })
         } catch {
           // A lease bounds retained processing state; preserve the original safe error.
         }

@@ -13,7 +13,8 @@ import {
 const GLOBAL_COORDINATOR_NAME = 'global'
 const INTERNAL_URL = 'https://quota-coordinator.internal'
 const OPERATION_RETENTION_SECONDS = 2 * 60 * 60
-const PROCESSING_LEASE_SECONDS = 90
+const PROCESSING_LEASE_SECONDS = 180
+const LEASE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
 interface AlarmStorage {
   getAlarm(): Promise<number | null>
@@ -25,7 +26,7 @@ interface CoordinatorQuotaStore extends QuotaCounterStore {
   getEarliestExpiry(): number | null
 }
 
-type CoordinatorSuccess = { ok: true; remaining?: number }
+type CoordinatorSuccess = { ok: true; remaining?: number; leaseId?: string }
 type CoordinatorFailure = { ok: false; error: { code: QuotaErrorCode; message: string } }
 type CoordinatorResponse = CoordinatorSuccess | CoordinatorFailure
 
@@ -44,6 +45,7 @@ class SqliteQuotaCounterStore implements CoordinatorQuotaStore {
         payload_hash TEXT NOT NULL,
         kind TEXT NOT NULL,
         state TEXT NOT NULL,
+        lease_id TEXT NOT NULL,
         lease_expires_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL
       ) STRICT
@@ -104,30 +106,31 @@ class SqliteQuotaCounterStore implements CoordinatorQuotaStore {
     this.storage.sql.exec('DELETE FROM task_states WHERE expires_at <= ?', nowSeconds)
   }
 
-  getOperation(keyHash: string): { payloadHash: string; kind: string; state: string; leaseExpiresAt: number; expiresAt: number } | undefined {
+  getOperation(keyHash: string): { payloadHash: string; kind: string; state: string; leaseId: string; leaseExpiresAt: number; expiresAt: number } | undefined {
     const rows = this.storage.sql.exec<{
       payloadHash: SqlStorageValue
       kind: SqlStorageValue
       state: SqlStorageValue
+      leaseId: SqlStorageValue
       leaseExpiresAt: SqlStorageValue
       expiresAt: SqlStorageValue
-    }>('SELECT payload_hash AS payloadHash, kind, state, lease_expires_at AS leaseExpiresAt, expires_at AS expiresAt FROM operation_states WHERE key_hash = ?', keyHash).toArray()
+    }>('SELECT payload_hash AS payloadHash, kind, state, lease_id AS leaseId, lease_expires_at AS leaseExpiresAt, expires_at AS expiresAt FROM operation_states WHERE key_hash = ?', keyHash).toArray()
     if (rows.length === 0) return undefined
     if (rows.length !== 1 || !isOperationRecord(rows[0])) throw new QuotaError('INTERNAL_ERROR')
     return rows[0]
   }
 
-  putOperation(keyHash: string, payloadHash: string, kind: 'overview' | 'candidate', state: 'processing' | 'completed', leaseExpiresAt: number, expiresAt: number): void {
+  putOperation(keyHash: string, payloadHash: string, kind: 'overview' | 'candidate', state: 'processing' | 'completed', leaseId: string, leaseExpiresAt: number, expiresAt: number): void {
     this.storage.sql.exec(
-      `INSERT INTO operation_states (key_hash, payload_hash, kind, state, lease_expires_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(key_hash) DO UPDATE SET payload_hash = excluded.payload_hash, kind = excluded.kind, state = excluded.state, lease_expires_at = excluded.lease_expires_at, expires_at = excluded.expires_at`,
-      keyHash, payloadHash, kind, state, leaseExpiresAt, expiresAt,
+      `INSERT INTO operation_states (key_hash, payload_hash, kind, state, lease_id, lease_expires_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(key_hash) DO UPDATE SET payload_hash = excluded.payload_hash, kind = excluded.kind, state = excluded.state, lease_id = excluded.lease_id, lease_expires_at = excluded.lease_expires_at, expires_at = excluded.expires_at`,
+      keyHash, payloadHash, kind, state, leaseId, leaseExpiresAt, expiresAt,
     )
   }
 
-  deleteProcessingOperation(keyHash: string, payloadHash: string): void {
-    this.storage.sql.exec("DELETE FROM operation_states WHERE key_hash = ? AND payload_hash = ? AND state = 'processing'", keyHash, payloadHash)
+  deleteProcessingOperation(keyHash: string, payloadHash: string, leaseId: string): void {
+    this.storage.sql.exec("DELETE FROM operation_states WHERE key_hash = ? AND payload_hash = ? AND lease_id = ? AND state = 'processing'", keyHash, payloadHash, leaseId)
   }
 
   hasTask(taskHash: string, nowSeconds: number): boolean {
@@ -178,9 +181,9 @@ function isHash(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
 }
 
-function isOperationRecord(value: Record<string, unknown>): value is { payloadHash: string; kind: string; state: string; leaseExpiresAt: number; expiresAt: number } {
+function isOperationRecord(value: Record<string, unknown>): value is { payloadHash: string; kind: string; state: string; leaseId: string; leaseExpiresAt: number; expiresAt: number } {
   return isHash(value.payloadHash) && (value.kind === 'overview' || value.kind === 'candidate') &&
-    (value.state === 'processing' || value.state === 'completed') &&
+    (value.state === 'processing' || value.state === 'completed') && typeof value.leaseId === 'string' && LEASE_ID_PATTERN.test(value.leaseId) &&
     Number.isSafeInteger(value.leaseExpiresAt) && Number.isSafeInteger(value.expiresAt)
 }
 
@@ -285,8 +288,8 @@ export class QuotaCoordinator implements DurableObject {
     }
   }
 
-  private beginOperation(kind: 'overview' | 'candidate', keyHash: string, payloadHash: string, taskHash: string | undefined, nowSeconds: number): void {
-    this.store.transaction(() => {
+  private beginOperation(kind: 'overview' | 'candidate', keyHash: string, payloadHash: string, taskHash: string | undefined, nowSeconds: number): string {
+    return this.store.transaction(() => {
       this.store.deleteExpired(nowSeconds)
       this.store.deleteExpiredOperations(nowSeconds)
       if (taskHash !== undefined && !this.store.hasTask(taskHash, nowSeconds)) throw new QuotaError('OPERATION_CONFLICT')
@@ -296,27 +299,34 @@ export class QuotaCoordinator implements DurableObject {
           throw new QuotaError('OPERATION_CONFLICT')
         }
       }
-      this.store.putOperation(keyHash, payloadHash, kind, 'processing', nowSeconds + PROCESSING_LEASE_SECONDS, nowSeconds + OPERATION_RETENTION_SECONDS)
+      const leaseId = crypto.randomUUID()
+      this.store.putOperation(keyHash, payloadHash, kind, 'processing', leaseId, nowSeconds + PROCESSING_LEASE_SECONDS, nowSeconds + OPERATION_RETENTION_SECONDS)
+      return leaseId
     })
   }
 
-  private releaseOperation(keyHash: string, payloadHash: string): void {
-    this.store.transaction(() => this.store.deleteProcessingOperation(keyHash, payloadHash))
-  }
-
-  private completeCandidate(keyHash: string, payloadHash: string, nowSeconds: number): void {
+  private releaseOperation(keyHash: string, payloadHash: string, leaseId: string): void {
     this.store.transaction(() => {
       const operation = this.store.getOperation(keyHash)
-      if (operation === undefined || operation.kind !== 'candidate' || operation.state !== 'processing' || operation.payloadHash !== payloadHash) {
+      if (operation === undefined || operation.payloadHash !== payloadHash || operation.leaseId !== leaseId || operation.state !== 'processing') throw new QuotaError('OPERATION_CONFLICT')
+      this.store.deleteProcessingOperation(keyHash, payloadHash, leaseId)
+    })
+  }
+
+  private completeCandidate(keyHash: string, payloadHash: string, leaseId: string, nowSeconds: number): void {
+    this.store.transaction(() => {
+      const operation = this.store.getOperation(keyHash)
+      if (operation === undefined || operation.kind !== 'candidate' || operation.state !== 'processing' || operation.payloadHash !== payloadHash || operation.leaseId !== leaseId) {
         throw new QuotaError('OPERATION_CONFLICT')
       }
-      this.store.putOperation(keyHash, payloadHash, 'candidate', 'completed', nowSeconds, operation.expiresAt)
+      this.store.putOperation(keyHash, payloadHash, 'candidate', 'completed', leaseId, nowSeconds, operation.expiresAt)
     })
   }
 
   private commitOverview(
     keyHash: string,
     payloadHash: string,
+    leaseId: string,
     deviceHash: string,
     ipHash: string,
     taskHash: string,
@@ -326,11 +336,11 @@ export class QuotaCoordinator implements DurableObject {
     const nowSeconds = Math.floor(now.getTime() / 1000)
     return this.store.transaction(() => {
       const operation = this.store.getOperation(keyHash)
-      if (operation === undefined || operation.kind !== 'overview' || operation.state !== 'processing' || operation.payloadHash !== payloadHash) {
+      if (operation === undefined || operation.kind !== 'overview' || operation.state !== 'processing' || operation.payloadHash !== payloadHash || operation.leaseId !== leaseId) {
         throw new QuotaError('OPERATION_CONFLICT')
       }
       const result = reserveHashedQuota(this.store, deviceHash, ipHash, now)
-      this.store.putOperation(keyHash, payloadHash, 'overview', 'completed', nowSeconds, operation.expiresAt)
+      this.store.putOperation(keyHash, payloadHash, 'overview', 'completed', leaseId, nowSeconds, operation.expiresAt)
       this.store.putTask(taskHash, taskExpiresAt)
       return result
     })
@@ -378,34 +388,34 @@ export class QuotaCoordinator implements DurableObject {
       if (pathname === '/overview/begin') {
         if (!hasExactHashes(body, ['keyHash', 'payloadHash'])) throw new QuotaError('INVALID_REQUEST')
         await this.prepareOperationAlarm(nowSeconds)
-        this.beginOperation('overview', body.keyHash as string, body.payloadHash as string, undefined, nowSeconds)
-        return Response.json({ ok: true } satisfies CoordinatorSuccess)
+        const leaseId = this.beginOperation('overview', body.keyHash as string, body.payloadHash as string, undefined, nowSeconds)
+        return Response.json({ ok: true, leaseId } satisfies CoordinatorSuccess)
       }
       if (pathname === '/overview/release') {
-        if (!hasExactHashes(body, ['keyHash', 'payloadHash'])) throw new QuotaError('INVALID_REQUEST')
-        this.releaseOperation(body.keyHash as string, body.payloadHash as string)
+        if (!hasExactHashes(body, ['keyHash', 'payloadHash'], ['leaseId'])) throw new QuotaError('INVALID_REQUEST')
+        this.releaseOperation(body.keyHash as string, body.payloadHash as string, body.leaseId as string)
         return Response.json({ ok: true } satisfies CoordinatorSuccess)
       }
       if (pathname === '/overview/commit') {
-        if (!hasExactHashes(body, ['keyHash', 'payloadHash', 'deviceHash', 'ipHash', 'taskHash'])) throw new QuotaError('INVALID_REQUEST')
+        if (!hasExactHashes(body, ['keyHash', 'payloadHash', 'deviceHash', 'ipHash', 'taskHash'], ['leaseId'])) throw new QuotaError('INVALID_REQUEST')
         await this.prepareOperationAlarm(nowSeconds)
-        const result = this.commitOverview(body.keyHash as string, body.payloadHash as string, body.deviceHash as string, body.ipHash as string, body.taskHash as string, nowSeconds + OPERATION_RETENTION_SECONDS, now)
+        const result = this.commitOverview(body.keyHash as string, body.payloadHash as string, body.leaseId as string, body.deviceHash as string, body.ipHash as string, body.taskHash as string, nowSeconds + OPERATION_RETENTION_SECONDS, now)
         return Response.json({ ok: true, remaining: result.remaining } satisfies CoordinatorSuccess)
       }
       if (pathname === '/candidate/begin') {
         if (!hasExactHashes(body, ['taskHash', 'payloadHash'])) throw new QuotaError('INVALID_REQUEST')
         await this.prepareOperationAlarm(nowSeconds)
-        this.beginOperation('candidate', body.taskHash as string, body.payloadHash as string, body.taskHash as string, nowSeconds)
-        return Response.json({ ok: true } satisfies CoordinatorSuccess)
+        const leaseId = this.beginOperation('candidate', body.taskHash as string, body.payloadHash as string, body.taskHash as string, nowSeconds)
+        return Response.json({ ok: true, leaseId } satisfies CoordinatorSuccess)
       }
       if (pathname === '/candidate/release') {
-        if (!hasExactHashes(body, ['taskHash', 'payloadHash'])) throw new QuotaError('INVALID_REQUEST')
-        this.releaseOperation(body.taskHash as string, body.payloadHash as string)
+        if (!hasExactHashes(body, ['taskHash', 'payloadHash'], ['leaseId'])) throw new QuotaError('INVALID_REQUEST')
+        this.releaseOperation(body.taskHash as string, body.payloadHash as string, body.leaseId as string)
         return Response.json({ ok: true } satisfies CoordinatorSuccess)
       }
       if (pathname === '/candidate/complete') {
-        if (!hasExactHashes(body, ['taskHash', 'payloadHash'])) throw new QuotaError('INVALID_REQUEST')
-        this.completeCandidate(body.taskHash as string, body.payloadHash as string, nowSeconds)
+        if (!hasExactHashes(body, ['taskHash', 'payloadHash'], ['leaseId'])) throw new QuotaError('INVALID_REQUEST')
+        this.completeCandidate(body.taskHash as string, body.payloadHash as string, body.leaseId as string, nowSeconds)
         return Response.json({ ok: true } satisfies CoordinatorSuccess)
       }
 
@@ -423,8 +433,8 @@ export class QuotaCoordinator implements DurableObject {
   }
 }
 
-function hasExactHashes(body: Record<string, unknown>, keys: readonly string[], additionalKeys = 0): boolean {
-  return Object.keys(body).length === keys.length + additionalKeys && keys.every((key) => isHash(body[key]))
+function hasExactHashes(body: Record<string, unknown>, hashes: readonly string[], leaseKeys: readonly string[] = []): boolean {
+  return Object.keys(body).length === hashes.length + leaseKeys.length && hashes.every((key) => isHash(body[key])) && leaseKeys.every((key) => typeof body[key] === 'string' && LEASE_ID_PATTERN.test(body[key] as string))
 }
 
 function parseCoordinatorResponse(value: unknown): CoordinatorResponse {
@@ -435,9 +445,10 @@ function parseCoordinatorResponse(value: unknown): CoordinatorResponse {
   const response = value as Record<string, unknown>
   if (
     response.ok === true &&
-    (response.remaining === undefined || (Number.isInteger(response.remaining) && (response.remaining as number) >= 0 && (response.remaining as number) <= 5))
+    (response.remaining === undefined || (Number.isInteger(response.remaining) && (response.remaining as number) >= 0 && (response.remaining as number) <= 5)) &&
+    (response.leaseId === undefined || (typeof response.leaseId === 'string' && LEASE_ID_PATTERN.test(response.leaseId)))
   ) {
-    return response.remaining === undefined ? { ok: true } : { ok: true, remaining: response.remaining as number }
+    return { ok: true, ...(response.remaining === undefined ? {} : { remaining: response.remaining as number }), ...(response.leaseId === undefined ? {} : { leaseId: response.leaseId as string }) }
   }
 
   if (
@@ -498,24 +509,28 @@ export function createQuotaCoordinatorClient(env: Pick<Env, 'QUOTA_COORDINATOR'>
       return { remaining: result.remaining }
     },
 
-    async beginOverview(input: { keyHash: string; payloadHash: string }): Promise<void> {
-      await call('/overview/begin', input)
+    async beginOverview(input: { keyHash: string; payloadHash: string }): Promise<{ leaseId: string }> {
+      const result = await call('/overview/begin', input)
+      if (result.leaseId === undefined) throw new QuotaError('INTERNAL_ERROR')
+      return { leaseId: result.leaseId }
     },
-    async releaseOverview(input: { keyHash: string; payloadHash: string }): Promise<void> {
+    async releaseOverview(input: { keyHash: string; payloadHash: string; leaseId: string }): Promise<void> {
       await call('/overview/release', input)
     },
-    async commitOverview(input: { keyHash: string; payloadHash: string; deviceHash: string; ipHash: string; taskHash: string }): Promise<{ remaining: number }> {
+    async commitOverview(input: { keyHash: string; payloadHash: string; leaseId: string; deviceHash: string; ipHash: string; taskHash: string }): Promise<{ remaining: number }> {
       const result = await call('/overview/commit', input)
       if (result.remaining === undefined) throw new QuotaError('INTERNAL_ERROR')
       return { remaining: result.remaining }
     },
-    async beginCandidate(input: { taskHash: string; payloadHash: string }): Promise<void> {
-      await call('/candidate/begin', input)
+    async beginCandidate(input: { taskHash: string; payloadHash: string }): Promise<{ leaseId: string }> {
+      const result = await call('/candidate/begin', input)
+      if (result.leaseId === undefined) throw new QuotaError('INTERNAL_ERROR')
+      return { leaseId: result.leaseId }
     },
-    async releaseCandidate(input: { taskHash: string; payloadHash: string }): Promise<void> {
+    async releaseCandidate(input: { taskHash: string; payloadHash: string; leaseId: string }): Promise<void> {
       await call('/candidate/release', input)
     },
-    async completeCandidate(input: { taskHash: string; payloadHash: string }): Promise<void> {
+    async completeCandidate(input: { taskHash: string; payloadHash: string; leaseId: string }): Promise<void> {
       await call('/candidate/complete', input)
     },
   }

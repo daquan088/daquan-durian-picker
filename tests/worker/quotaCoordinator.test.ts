@@ -112,21 +112,22 @@ describe('quotaCoordinator client', () => {
   it('sends idempotency state operations using only salted hashes and numeric metadata', async () => {
     const hash = 'a'.repeat(64)
     const fetch = vi.fn()
-      .mockResolvedValueOnce(Response.json({ ok: true }))
+      .mockResolvedValueOnce(Response.json({ ok: true, leaseId: '123e4567-e89b-42d3-a456-426614174099' }))
       .mockResolvedValueOnce(Response.json({ ok: true, remaining: 4 }))
-      .mockResolvedValueOnce(Response.json({ ok: true }))
+      .mockResolvedValueOnce(Response.json({ ok: true, leaseId: '123e4567-e89b-42d3-a456-426614174098' }))
     const client = createQuotaCoordinatorClient({
       QUOTA_COORDINATOR: { getByName: () => ({ fetch }) },
     } as never)
 
-    await client.beginOverview({ keyHash: hash, payloadHash: 'b'.repeat(64) })
-    await client.commitOverview({ keyHash: hash, payloadHash: 'b'.repeat(64), deviceHash: 'c'.repeat(64), ipHash: 'd'.repeat(64), taskHash: 'e'.repeat(64) })
+    const lease = await client.beginOverview({ keyHash: hash, payloadHash: 'b'.repeat(64) })
+    expect(lease).toEqual({ leaseId: '123e4567-e89b-42d3-a456-426614174099' })
+    await client.commitOverview({ keyHash: hash, payloadHash: 'b'.repeat(64), deviceHash: 'c'.repeat(64), ipHash: 'd'.repeat(64), taskHash: 'e'.repeat(64), leaseId: lease.leaseId })
     await client.beginCandidate({ taskHash: 'e'.repeat(64), payloadHash: 'f'.repeat(64) })
 
     const bodies = fetch.mock.calls.map(([, init]) => JSON.parse((init as RequestInit).body as string))
     expect(bodies).toEqual([
       { keyHash: hash, payloadHash: 'b'.repeat(64) },
-      { keyHash: hash, payloadHash: 'b'.repeat(64), deviceHash: 'c'.repeat(64), ipHash: 'd'.repeat(64), taskHash: 'e'.repeat(64) },
+      { keyHash: hash, payloadHash: 'b'.repeat(64), leaseId: lease.leaseId, deviceHash: 'c'.repeat(64), ipHash: 'd'.repeat(64), taskHash: 'e'.repeat(64) },
       { taskHash: 'e'.repeat(64), payloadHash: 'f'.repeat(64) },
     ])
     expect(JSON.stringify(bodies)).not.toContain('data:image')

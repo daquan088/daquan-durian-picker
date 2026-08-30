@@ -23,12 +23,12 @@ const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}
 export interface QuotaCoordinatorClient {
   getRemaining(deviceId: string): Promise<number>
   reserve(deviceId: string, ipAddress: string): Promise<{ remaining: number }>
-  beginOverview(input: { keyHash: string; payloadHash: string }): Promise<void>
-  releaseOverview(input: { keyHash: string; payloadHash: string }): Promise<void>
-  commitOverview(input: { keyHash: string; payloadHash: string; deviceHash: string; ipHash: string; taskHash: string }): Promise<{ remaining: number }>
-  beginCandidate(input: { taskHash: string; payloadHash: string }): Promise<void>
-  releaseCandidate(input: { taskHash: string; payloadHash: string }): Promise<void>
-  completeCandidate(input: { taskHash: string; payloadHash: string }): Promise<void>
+  beginOverview(input: { keyHash: string; payloadHash: string }): Promise<{ leaseId: string }>
+  releaseOverview(input: { keyHash: string; payloadHash: string; leaseId: string }): Promise<void>
+  commitOverview(input: { keyHash: string; payloadHash: string; leaseId: string; deviceHash: string; ipHash: string; taskHash: string }): Promise<{ remaining: number }>
+  beginCandidate(input: { taskHash: string; payloadHash: string }): Promise<{ leaseId: string }>
+  releaseCandidate(input: { taskHash: string; payloadHash: string; leaseId: string }): Promise<void>
+  completeCandidate(input: { taskHash: string; payloadHash: string; leaseId: string }): Promise<void>
 }
 
 export interface AppDependencies {
