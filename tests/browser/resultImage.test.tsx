@@ -2,7 +2,7 @@ import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { toPng } from 'html-to-image'
-import type { FinalRankingSuccessPayload } from '../../shared/contracts'
+import type { FinalRankingSuccessPayload, OverviewSuccessPayload } from '../../shared/contracts'
 import { FinalResult, FINAL_DISCLAIMER } from '../../src/components/FinalResult'
 import { exportResultImage, RESULT_IMAGE_FILENAME } from '../../src/lib/resultImage'
 
@@ -10,6 +10,16 @@ vi.mock('html-to-image', () => ({ toPng: vi.fn() }))
 
 const png = 'data:image/png;base64,UE5H'
 const result: FinalRankingSuccessPayload = { variety: 'thai-monthong', result: { ranking: [{ candidate_id: 1, rank: 1, appearance_score: 91, evidence: ['果形匀称'], risks: [], evidence_strength: 'high' }], summary: '优先选择 1 号。', limitations: ['照片光线会影响判断'] } }
+const overview: OverviewSuccessPayload = {
+  variety: 'thai-monthong',
+  image_quality: 'good',
+  warnings: [],
+  fruits: [{ id: 1, box_2d: [100, 120, 700, 760], status: 'preferred', visibility: 'high', evidence: ['果形匀称'], risks: [], evidence_strength: 'high' }],
+  shortlist_ids: [1],
+  taskToken: 'task-token',
+  remaining: 4,
+}
+const overviewImage = { dataUrl: 'data:image/jpeg;base64,T1ZFUlZJRVc=', width: 1200, height: 1600 }
 const mockedToPng = vi.mocked(toPng)
 
 function shareNavigator(values: Partial<Pick<Navigator, 'canShare' | 'share'>>) {
@@ -60,13 +70,15 @@ describe('FinalResult export experience', () => {
   it('captures product title, ranking and full visible-exterior declaration without controls', async () => {
     const user = userEvent.setup()
     const exportResult = vi.fn().mockResolvedValue({ kind: 'fallback', dataUrl: png, file: new File(['PNG'], RESULT_IMAGE_FILENAME, { type: 'image/png' }) })
-    render(<FinalResult result={result} onRestart={vi.fn()} exportResult={exportResult} />)
+    render(<FinalResult result={result} overview={overview} overviewImage={overviewImage} onRestart={vi.fn()} exportResult={exportResult} />)
     await user.click(screen.getByRole('button', { name: '保存或分享结果' }))
     const capture = exportResult.mock.calls[0]![0] as HTMLElement
     expect(capture.textContent).toContain('大全助你选金枕榴莲')
     expect(capture.textContent).toContain('第一推荐 · 1号')
     expect(capture.textContent).toContain(FINAL_DISCLAIMER)
     expect(capture.textContent).not.toContain('保存或分享结果')
+    expect(capture.querySelector('img[alt="带编号的榴莲合照"]')?.getAttribute('src')).toBe(overviewImage.dataUrl)
+    expect(capture.querySelector('[data-testid="fruit-box-1"]')).not.toBeNull()
     expect(document.body.contains(screen.getByText('长按保存结果图'))).toBe(true)
     expect(screen.getByRole('img', { name: '可长按保存的榴莲挑选结果图' }).getAttribute('src')).toBe(png)
   })
@@ -74,7 +86,7 @@ describe('FinalResult export experience', () => {
   it('keeps the fallback image when share fails and allows closing or regenerating it', async () => {
     const user = userEvent.setup()
     const exportResult = vi.fn().mockResolvedValue({ kind: 'fallback', dataUrl: png, file: new File(['PNG'], RESULT_IMAGE_FILENAME, { type: 'image/png' }), error: new Error('share failed') })
-    render(<FinalResult result={result} onRestart={vi.fn()} exportResult={exportResult} />)
+    render(<FinalResult result={result} overview={overview} overviewImage={overviewImage} onRestart={vi.fn()} exportResult={exportResult} />)
     await user.click(screen.getByRole('button', { name: '保存或分享结果' }))
     expect(screen.getByRole('status').textContent).toBe('分享未完成，已生成可保存的结果图。')
     await user.click(screen.getByRole('button', { name: '关闭结果图预览' }))
@@ -88,7 +100,7 @@ describe('FinalResult export experience', () => {
     type FallbackOutcome = { kind: 'fallback'; dataUrl: string; file: File }
     let resolveExport!: (value: FallbackOutcome) => void
     const exportResult = vi.fn(() => new Promise<FallbackOutcome>((resolve) => { resolveExport = resolve }))
-    const { unmount } = render(<FinalResult result={result} onRestart={vi.fn()} exportResult={exportResult} />)
+    const { unmount } = render(<FinalResult result={result} overview={overview} overviewImage={overviewImage} onRestart={vi.fn()} exportResult={exportResult} />)
     const save = screen.getByRole('button', { name: '保存或分享结果' })
     await user.click(save)
     await user.click(save)

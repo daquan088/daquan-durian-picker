@@ -119,7 +119,10 @@ describe('CandidateWizard', () => {
   })
 
   it('renders continuous ranks and the fixed exterior-only declaration', () => {
-    render(<FinalResult onRestart={vi.fn()} result={{ variety: 'thai-monthong', result: { ranking: [
+    render(<FinalResult onRestart={vi.fn()} overview={{ variety: 'thai-monthong', image_quality: 'good', warnings: [], fruits: [
+      { id: 1, box_2d: [100, 100, 500, 500], status: 'preferred', visibility: 'high', evidence: ['证据'], risks: [], evidence_strength: 'high' },
+      { id: 2, box_2d: [200, 550, 650, 900], status: 'normal', visibility: 'medium', evidence: ['证据'], risks: [], evidence_strength: 'medium' },
+    ], shortlist_ids: [1, 2], taskToken: 'task-token', remaining: 4 }} overviewImage={{ dataUrl: 'data:image/jpeg;base64,T1ZFUlZJRVc=', width: 1200, height: 900 }} result={{ variety: 'thai-monthong', result: { ranking: [
       { candidate_id: 2, rank: 2, appearance_score: 75, evidence: ['证据'], risks: [], evidence_strength: 'medium' },
       { candidate_id: 1, rank: 1, appearance_score: 90, evidence: ['证据'], risks: [], evidence_strength: 'high' },
     ], summary: '总结', limitations: ['限制'] } }} />)

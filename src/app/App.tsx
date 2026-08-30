@@ -144,7 +144,7 @@ export function App({ quotaLoader = requestQuota, overviewLoader = requestOvervi
     {overviewImage && !overviewBusy ? <button className="secondary-button" type="button" onClick={() => overviewInputRef.current?.click()}>重新拍摄</button> : null}<QuotaModal open={quotaModalOpen} onClose={closeQuotaModal} /></main>
   if (state.screen === 'shortlist' && state.overview && overviewImage) return <><OverviewScreen image={overviewImage} overview={state.overview} onRestart={reset} onContinue={(ids) => dispatch({ type: 'SELECT_CANDIDATES', ids })} /><QuotaModal open={quotaModalOpen} onClose={closeQuotaModal} /></>
   if (state.screen === 'capture' && state.overview) return <CandidateWizard selectedIds={state.selectedCandidateIds} taskToken={state.overview.taskToken} imageProcessor={candidateImageProcessor} submit={candidateLoader} onBack={() => dispatch({ type: 'BACK_TO_SHORTLIST' })} onSuccess={(result) => dispatch({ type: 'CANDIDATES_SUCCESS', payload: result })} />
-  if (state.screen === 'final' && state.finalResult) return <FinalResult result={state.finalResult} onRestart={reset} exportResult={resultExporter} />
+  if (state.screen === 'final' && state.finalResult && state.overview && overviewImage) return <FinalResult result={state.finalResult} overview={state.overview} overviewImage={overviewImage} onRestart={reset} exportResult={resultExporter} />
 
   return (
     <>
