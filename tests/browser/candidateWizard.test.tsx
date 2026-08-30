@@ -9,18 +9,55 @@ function processed(id: string): ProcessedImage { return { blob: new Blob(), data
 const file = new File(['jpeg'], 'test.jpg', { type: 'image/jpeg' })
 
 describe('CandidateWizard', () => {
-  it('revokes a delayed candidate image without updating after back or unmount', async () => {
-    let resolveImage!: (image: ProcessedImage) => void
-    const stale = processed('stale')
+  it('revokes every delayed candidate image without updating after back or unmount', async () => {
+    const resolvers: Array<(image: ProcessedImage) => void> = []
+    const staleStem = processed('stale-stem')
+    const staleBottom = processed('stale-bottom')
     const onBack = vi.fn()
-    const { unmount } = render(<CandidateWizard selectedIds={[1]} taskToken="task" imageProcessor={() => new Promise((resolve) => { resolveImage = resolve })} submit={vi.fn()} onSuccess={vi.fn()} onBack={onBack} />)
+    const { unmount } = render(<CandidateWizard selectedIds={[1]} taskToken="task" imageProcessor={() => new Promise((resolve) => { resolvers.push(resolve) })} submit={vi.fn()} onSuccess={vi.fn()} onBack={onBack} />)
     fireEvent.change(document.getElementById('capture-1-stem')!, { target: { files: [file] } })
+    fireEvent.change(document.getElementById('capture-1-bottom')!, { target: { files: [file] } })
     fireEvent.click(screen.getByRole('button', { name: '返回初筛结果' }))
     expect(onBack).toHaveBeenCalledTimes(1)
     unmount()
-    await Promise.resolve().then(() => resolveImage(stale))
-    await waitFor(() => expect(stale.revoke).toHaveBeenCalledTimes(1))
+    await Promise.resolve().then(() => resolvers[0]!(staleStem))
+    await Promise.resolve().then(() => resolvers[1]!(staleBottom))
+    await waitFor(() => expect(staleStem.revoke).toHaveBeenCalledTimes(1))
+    expect(staleBottom.revoke).toHaveBeenCalledTimes(1)
     expect(screen.queryByAltText('1号果柄预览')).toBeNull()
+  })
+
+  it('keeps concurrent stem and bottom processing for one candidate when they finish out of order', async () => {
+    const resolvers: Array<(image: ProcessedImage) => void> = []
+    const stem = processed('stem')
+    const bottom = processed('bottom')
+    render(<CandidateWizard selectedIds={[1]} taskToken="task" imageProcessor={() => new Promise((resolve) => { resolvers.push(resolve) })} submit={vi.fn()} onSuccess={vi.fn()} onBack={vi.fn()} />)
+    fireEvent.change(document.getElementById('capture-1-stem')!, { target: { files: [file] } })
+    fireEvent.change(document.getElementById('capture-1-bottom')!, { target: { files: [file] } })
+    await Promise.resolve().then(() => resolvers[1]!(bottom))
+    await Promise.resolve().then(() => resolvers[0]!(stem))
+    await waitFor(() => expect(screen.getByAltText('1号果柄预览').getAttribute('src')).toBe('blob:stem'))
+    expect(screen.getByAltText('1号底部果瓣线预览').getAttribute('src')).toBe('blob:bottom')
+    expect(stem.revoke).not.toHaveBeenCalled()
+    expect(bottom.revoke).not.toHaveBeenCalled()
+  })
+
+  it('keeps concurrent processing for different candidates despite switching the visible candidate', async () => {
+    const user = userEvent.setup()
+    const resolvers: Array<(image: ProcessedImage) => void> = []
+    const first = processed('candidate-1')
+    const second = processed('candidate-2')
+    render(<CandidateWizard selectedIds={[1, 2]} taskToken="task" imageProcessor={() => new Promise((resolve) => { resolvers.push(resolve) })} submit={vi.fn()} onSuccess={vi.fn()} onBack={vi.fn()} />)
+    fireEvent.change(document.getElementById('capture-1-stem')!, { target: { files: [file] } })
+    await user.click(screen.getByRole('tab', { name: '2号' }))
+    fireEvent.change(document.getElementById('capture-2-stem')!, { target: { files: [file] } })
+    await Promise.resolve().then(() => resolvers[1]!(second))
+    await Promise.resolve().then(() => resolvers[0]!(first))
+    await waitFor(() => expect(screen.getByAltText('2号果柄预览').getAttribute('src')).toBe('blob:candidate-2'))
+    await user.click(screen.getByRole('tab', { name: '1号' }))
+    expect(screen.getByAltText('1号果柄预览').getAttribute('src')).toBe('blob:candidate-1')
+    expect(first.revoke).not.toHaveBeenCalled()
+    expect(second.revoke).not.toHaveBeenCalled()
   })
 
   it('keeps only the newest same-slot processing result and never binds it to another candidate', async () => {

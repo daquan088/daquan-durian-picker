@@ -21,13 +21,14 @@ export interface CandidateWizardProps {
 export function CandidateWizard({ selectedIds, taskToken, imageProcessor, submit, onSuccess, onBack }: CandidateWizardProps) {
   const [activeId, setActiveId] = useState(selectedIds[0]!)
   const [photos, setPhotos] = useState<Record<number, CandidatePhotos>>(() => Object.fromEntries(selectedIds.map((id) => [id, {}])))
-  const [busy, setBusy] = useState<string | null>(null)
+  const [busySlots, setBusySlots] = useState<ReadonlySet<string>>(() => new Set())
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const submitKey = useRef<string | null>(null)
   const controllerRef = useRef<AbortController | null>(null)
   const disposedRef = useRef(false)
-  const processingGenerationRef = useRef(0)
+  const lifecycleGenerationRef = useRef(0)
+  const slotGenerationsRef = useRef(new Map<string, number>())
   const inputRefs = useRef<Partial<Record<View, HTMLInputElement | null>>>({})
   const photosRef = useRef(photos)
   photosRef.current = photos
@@ -38,7 +39,7 @@ export function CandidateWizard({ selectedIds, taskToken, imageProcessor, submit
     disposedRef.current = false
     return () => {
       disposedRef.current = true
-      processingGenerationRef.current += 1
+      lifecycleGenerationRef.current += 1
       controllerRef.current?.abort()
       controllerRef.current = null
       Object.values(photosRef.current).forEach((candidate) => Object.values(candidate).forEach((photo) => photo?.revoke()))
@@ -47,20 +48,28 @@ export function CandidateWizard({ selectedIds, taskToken, imageProcessor, submit
   const choose = async (view: View, file?: File) => {
     if (!file || submitting || disposedRef.current) return
     const candidateId = activeId
-    const generation = ++processingGenerationRef.current
-    setBusy(`${candidateId}-${view}`); setError(null)
+    const slotKey = `${candidateId}:${view}`
+    const lifecycleGeneration = lifecycleGenerationRef.current
+    const slotGeneration = (slotGenerationsRef.current.get(slotKey) ?? 0) + 1
+    slotGenerationsRef.current.set(slotKey, slotGeneration)
+    const isCurrent = () => !disposedRef.current && lifecycleGeneration === lifecycleGenerationRef.current && slotGenerationsRef.current.get(slotKey) === slotGeneration
+    setBusySlots((previous) => new Set(previous).add(slotKey)); setError(null)
     try {
       const processed = await imageProcessor(file)
-      if (disposedRef.current || generation !== processingGenerationRef.current) {
+      if (!isCurrent()) {
         processed.revoke()
         return
       }
       photosRef.current[candidateId]?.[view]?.revoke()
       setPhotos((previous) => ({ ...previous, [candidateId]: { ...previous[candidateId], [view]: processed } }))
     } catch (reason) {
-      if (!disposedRef.current && generation === processingGenerationRef.current) setError(reason instanceof Error ? reason.message : '图片处理失败，请重新拍摄。')
+      if (isCurrent()) setError(reason instanceof Error ? reason.message : '图片处理失败，请重新拍摄。')
     } finally {
-      if (!disposedRef.current && generation === processingGenerationRef.current) setBusy(null)
+      if (isCurrent()) setBusySlots((previous) => {
+        const next = new Set(previous)
+        next.delete(slotKey)
+        return next
+      })
     }
   }
   const payload = (): CandidateFollowUpPayload => ({ taskToken, candidates: selectedIds.map((candidate_id) => ({ candidate_id, stem: photos[candidate_id]!.stem!.dataUrl, body: photos[candidate_id]!.body!.dataUrl, bottom: photos[candidate_id]!.bottom!.dataUrl })) })
@@ -74,15 +83,13 @@ export function CandidateWizard({ selectedIds, taskToken, imageProcessor, submit
   }
   const leaveCapture = () => {
     disposedRef.current = true
-    processingGenerationRef.current += 1
+    lifecycleGenerationRef.current += 1
     controllerRef.current?.abort()
     controllerRef.current = null
     onBack()
   }
   const switchCandidate = (id: number) => {
     if (id === activeId) return
-    processingGenerationRef.current += 1
-    setBusy(null)
     setError(null)
     setActiveId(id)
   }
@@ -92,7 +99,7 @@ export function CandidateWizard({ selectedIds, taskToken, imageProcessor, submit
     <section className="capture-grid" aria-label={`${activeId}号补拍`}>
       {views.map(({ key, label }) => <div className="capture-slot" key={key}><input ref={(node) => { inputRefs.current[key] = node }} id={`capture-${activeId}-${key}`} hidden type="file" accept="image/*" capture="environment" onChange={(event) => { void choose(key, event.currentTarget.files?.[0]); event.currentTarget.value = '' }} />
         <button type="button" onClick={() => inputRefs.current[key]?.click()} disabled={submitting} aria-label={`为${activeId}号拍摄${label}`}>
-          {activePhotos[key] ? <img src={activePhotos[key]!.previewUrl} alt={`${activeId}号${label}预览`} /> : <span>{busy === `${activeId}-${key}` ? '正在处理照片…' : `拍${label}`}</span>}
+          {activePhotos[key] ? <img src={activePhotos[key]!.previewUrl} alt={`${activeId}号${label}预览`} /> : <span>{busySlots.has(`${activeId}:${key}`) ? '正在处理照片…' : `拍${label}`}</span>}
           {activePhotos[key] ? <i aria-hidden="true">✓</i> : null}
         </button><strong>{label}</strong></div>)}
     </section>
