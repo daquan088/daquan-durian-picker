@@ -180,6 +180,7 @@ async function requestResponse<T>(request: StructuredRequest<T>, isRetry: boolea
     if (controller.signal.aborted || isAbortError(error)) {
       throw new OpenAIClientError('PROVIDER_TIMEOUT')
     }
+    console.warn('AI provider network failure', safeNetworkDiagnostic(error))
     throw error
   } finally {
     clearTimeout(timer)
@@ -254,6 +255,14 @@ function codeForStatus(status: number): OpenAIClientErrorCode {
 
 function isAbortError(error: unknown): boolean {
   return isRecord(error) && error.name === 'AbortError'
+}
+
+function safeNetworkDiagnostic(error: unknown): { name: string; message: string } {
+  if (!(error instanceof Error)) return { name: 'UnknownError', message: 'Unknown network failure' }
+  return {
+    name: error.name.slice(0, 80),
+    message: error.message.slice(0, 200),
+  }
 }
 
 function safeMessageFor(code: OpenAIClientErrorCode): string {
