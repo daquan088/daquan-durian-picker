@@ -116,6 +116,20 @@ describe('OpenAI Responses client', () => {
       ])
   })
 
+  it('uses a configured OpenAI-compatible Responses base URL', async () => {
+    const fetch = vi.fn<(input: string, init?: RequestInit) => Promise<Response>>(async () =>
+      assistantResponse(overviewFixture),
+    )
+    const client = createOpenAIResponsesClient({
+      env: { ...env, OPENAI_BASE_URL: 'https://kxai.cc/v1/' },
+      fetch,
+    })
+
+    await client.analyzeOverview({ images: [image] })
+
+    expect(fetch.mock.calls[0]?.[0]).toBe('https://kxai.cc/v1/responses')
+  })
+
   it.each([
     [401, 'PROVIDER_AUTH'],
     [403, 'PROVIDER_AUTH'],

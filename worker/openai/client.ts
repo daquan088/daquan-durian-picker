@@ -7,7 +7,7 @@ import {
 } from '../../shared/contracts'
 import { candidatePromptForIds, overviewPrompt } from './prompts'
 
-const RESPONSES_URL = 'https://api.openai.com/v1/responses'
+const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1'
 const REQUEST_TIMEOUT_MS = 45_000
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
@@ -35,6 +35,7 @@ class ModelOutputError extends Error {}
 export interface OpenAIResponsesClientEnvironment {
   OPENAI_API_KEY: string
   MODEL_ID: string
+  OPENAI_BASE_URL?: string
 }
 
 export interface OpenAIImageInput {
@@ -135,7 +136,7 @@ async function requestResponse<T>(request: StructuredRequest<T>, isRetry: boolea
   }
 
   try {
-    const response = await request.fetcher(RESPONSES_URL, {
+    const response = await request.fetcher(endpointFor(request.env), {
       method: 'POST',
       headers: {
         authorization: `Bearer ${request.env.OPENAI_API_KEY}`,
@@ -181,6 +182,11 @@ async function requestResponse<T>(request: StructuredRequest<T>, isRetry: boolea
     clearTimeout(timer)
     for (const signal of activeSignals) signal.removeEventListener('abort', abort)
   }
+}
+
+function endpointFor(env: OpenAIResponsesClientEnvironment): string {
+  const baseUrl = (env.OPENAI_BASE_URL || DEFAULT_OPENAI_BASE_URL).replace(/\/+$/, '')
+  return `${baseUrl}/responses`
 }
 
 function extractAssistantOutputText(response: unknown): string {

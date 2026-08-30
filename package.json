@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "tsc -b && vite build",
+    "postbuild": "node scripts/remove-build-secrets.mjs",
     "preview": "npm run build && vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
