@@ -166,7 +166,10 @@ async function requestResponse<T>(request: StructuredRequest<T>, isRetry: boolea
       }),
     })
 
-    if (!response.ok) throw new OpenAIClientError(codeForStatus(response.status))
+    if (!response.ok) {
+      console.warn('AI provider request failed', { status: response.status })
+      throw new OpenAIClientError(codeForStatus(response.status))
+    }
     try {
       return extractAssistantOutputText(await response.json())
     } catch {
