@@ -1,13 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-
-function App() {
-  return (
-    <main>
-      <h1>大全助你选金枕榴莲</h1>
-    </main>
-  )
-}
+import { App } from './app/App'
+import './styles/global.css'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
