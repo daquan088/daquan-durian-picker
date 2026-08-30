@@ -23,6 +23,19 @@ describe('OverviewScreen', () => {
     expect(document.body.contains(screen.getByText('识别到 2 颗；未识别或遮挡严重的榴莲不参与推荐'))).toBe(true)
   })
 
+  it('preserves risky overlay semantics when a risky fruit is also shortlisted', () => {
+    render(<OverviewScreen image={image} overview={overview} onContinue={vi.fn()} onRestart={vi.fn()} />)
+    const riskyBox = screen.getByTestId('fruit-box-2')
+    const riskyLabel = screen.getByTestId('fruit-label-2')
+    expect(riskyBox.getAttribute('data-status')).toBe('risky')
+    expect(riskyBox.classList.contains('durian-box--risky')).toBe(true)
+    expect(riskyBox.classList.contains('durian-box--shortlist')).toBe(true)
+    expect(riskyBox.classList.contains('durian-box--preferred')).toBe(false)
+    expect(riskyLabel.getAttribute('data-status')).toBe('risky')
+    expect(riskyLabel.classList.contains('durian-box-label--risky')).toBe(true)
+    expect(screen.getByTestId('fruit-box-1').classList.contains('durian-box--preferred')).toBe(true)
+  })
+
   it('starts with shortlist selections and prevents selecting more than three', async () => {
     const user = userEvent.setup()
     const larger = { ...overview, fruits: [1, 2, 3, 4].map((id) => ({ ...overview.fruits[0]!, id })), shortlist_ids: [1, 2, 3, 4] }
