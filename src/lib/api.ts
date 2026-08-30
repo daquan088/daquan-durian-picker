@@ -10,9 +10,12 @@ import {
 } from '../../shared/contracts'
 import { getDeviceId } from './deviceId'
 
+/** Must stay aligned with worker/http.ts MAX_REQUEST_BODY_BYTES. */
+export const API_MAX_REQUEST_BODY_BYTES = 25 * 1024 * 1024
+
 export class AppError extends Error {
   constructor(
-    readonly code: ApiErrorCode | 'NETWORK_ERROR' | 'INVALID_RESPONSE',
+    readonly code: ApiErrorCode | 'NETWORK_ERROR' | 'INVALID_RESPONSE' | 'PAYLOAD_TOO_LARGE',
     message: string,
     readonly status?: number,
   ) {
@@ -106,6 +109,10 @@ export async function requestOverview(payload: OverviewRequest, options: Request
 }
 
 export async function requestCandidates(payload: CandidateFollowUpPayload, options: RequestOptions = {}): Promise<FinalRankingSuccessPayload> {
+  const body = JSON.stringify(payload)
+  if (new TextEncoder().encode(body).byteLength > API_MAX_REQUEST_BODY_BYTES) {
+    throw new AppError('PAYLOAD_TOO_LARGE', '补拍图片总大小超过限制，请重新拍摄或减少图片大小。')
+  }
   return request('/api/analyze-candidates', {
     method: 'POST',
     signal: options.signal,
@@ -113,7 +120,7 @@ export async function requestCandidates(payload: CandidateFollowUpPayload, optio
       'content-type': 'application/json',
       'x-idempotency-key': options.idempotencyKey ?? createIdempotencyKey(),
     },
-    body: JSON.stringify(payload),
+    body,
   }, (value) => {
     const parsed = finalRankingSuccessEnvelopeSchema.safeParse(value)
     return parsed.success ? { success: true, data: parsed.data.data } : { success: false }

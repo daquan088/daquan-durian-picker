@@ -1,6 +1,8 @@
 export const IMAGE_MAX_BYTES = 25 * 1024 * 1024
 export const PROCESSED_IMAGE_MAX_BYTES = 6 * 1024 * 1024
 export const PROCESSED_IMAGE_MAX_EDGE = 2560
+export const CANDIDATE_IMAGE_MAX_BYTES = Math.floor(1.5 * 1024 * 1024)
+export const CANDIDATE_IMAGE_MAX_EDGE = 1600
 
 export type ImageProcessingErrorCode = 'IMAGE_TOO_LARGE' | 'INVALID_IMAGE' | 'UNSUPPORTED_MEDIA_TYPE'
 
@@ -47,14 +49,45 @@ interface CompressionAttempt {
   quality: number
 }
 
+interface ImageProcessingProfile {
+  maxBytes: number
+  maxEdge: number
+  label: string
+  attempts: readonly CompressionAttempt[]
+}
+
 // Fixed attempts prevent pathological files from causing an unbounded encode loop.
 // Preserve full resolution first, then lower JPEG quality, then reduce dimensions.
-const COMPRESSION_ATTEMPTS: readonly CompressionAttempt[] = [
+const OVERVIEW_COMPRESSION_ATTEMPTS: readonly CompressionAttempt[] = [
   { scale: 1, quality: 0.85 },
   { scale: 1, quality: 0.72 },
   { scale: 0.8, quality: 0.72 },
   { scale: 0.65, quality: 0.68 },
 ]
+
+const CANDIDATE_COMPRESSION_ATTEMPTS: readonly CompressionAttempt[] = [
+  { scale: 1, quality: 0.82 },
+  { scale: 1, quality: 0.68 },
+  { scale: 0.85, quality: 0.68 },
+  { scale: 0.72, quality: 0.64 },
+  { scale: 0.6, quality: 0.6 },
+  { scale: 0.5, quality: 0.56 },
+  { scale: 0.4, quality: 0.52 },
+]
+
+const OVERVIEW_PROFILE: ImageProcessingProfile = {
+  maxBytes: PROCESSED_IMAGE_MAX_BYTES,
+  maxEdge: PROCESSED_IMAGE_MAX_EDGE,
+  label: '6 MiB',
+  attempts: OVERVIEW_COMPRESSION_ATTEMPTS,
+}
+
+const CANDIDATE_PROFILE: ImageProcessingProfile = {
+  maxBytes: CANDIDATE_IMAGE_MAX_BYTES,
+  maxEdge: CANDIDATE_IMAGE_MAX_EDGE,
+  label: '1.5 MiB',
+  attempts: CANDIDATE_COMPRESSION_ATTEMPTS,
+}
 
 function invalidImage(message: string): ImageProcessingError {
   return new ImageProcessingError('INVALID_IMAGE', message)
@@ -137,8 +170,7 @@ async function encodeJpeg(
   }
 }
 
-/** Creates a processor with injectable browser APIs for deterministic browser tests. */
-export function createImageProcessor(adapter: ImageProcessingAdapter) {
+function createConfiguredImageProcessor(adapter: ImageProcessingAdapter, profile: ImageProcessingProfile) {
   return async function processImage(file: File): Promise<ProcessedImage> {
     if (!file || !Number.isFinite(file.size) || file.size <= 0) {
       throw invalidImage('The image file is empty or invalid.')
@@ -162,11 +194,11 @@ export function createImageProcessor(adapter: ImageProcessingAdapter) {
         throw invalidImage('The decoded image has invalid dimensions.')
       }
 
-      const initialScale = Math.min(1, PROCESSED_IMAGE_MAX_EDGE / Math.max(bitmap.width, bitmap.height))
+      const initialScale = Math.min(1, profile.maxEdge / Math.max(bitmap.width, bitmap.height))
       const baseWidth = scaledDimension(bitmap.width, initialScale)
       const baseHeight = scaledDimension(bitmap.height, initialScale)
 
-      for (const attempt of COMPRESSION_ATTEMPTS) {
+      for (const attempt of profile.attempts) {
         const width = scaledDimension(baseWidth, attempt.scale)
         const height = scaledDimension(baseHeight, attempt.scale)
         let blob: Blob
@@ -177,7 +209,7 @@ export function createImageProcessor(adapter: ImageProcessingAdapter) {
           throw invalidImage('Unable to encode the image as JPEG.')
         }
 
-        if (blob.size > PROCESSED_IMAGE_MAX_BYTES) {
+        if (blob.size > profile.maxBytes) {
           continue
         }
 
@@ -214,13 +246,27 @@ export function createImageProcessor(adapter: ImageProcessingAdapter) {
         }
       }
 
-      throw new ImageProcessingError('IMAGE_TOO_LARGE', 'The processed JPEG exceeds the 6 MiB upload limit.')
+      throw new ImageProcessingError('IMAGE_TOO_LARGE', `The processed JPEG exceeds the ${profile.label} upload limit.`)
     } finally {
       bitmap?.close()
     }
   }
 }
 
+/** Creates the overview-photo processor with injectable browser APIs for deterministic tests. */
+export function createImageProcessor(adapter: ImageProcessingAdapter) {
+  return createConfiguredImageProcessor(adapter, OVERVIEW_PROFILE)
+}
+
+/** Creates the lower-budget candidate follow-up processor used for up to nine photos. */
+export function createCandidateImageProcessor(adapter: ImageProcessingAdapter) {
+  return createConfiguredImageProcessor(adapter, CANDIDATE_PROFILE)
+}
+
 export async function processImage(file: File): Promise<ProcessedImage> {
   return createImageProcessor(createBrowserAdapter())(file)
+}
+
+export async function processCandidateImage(file: File): Promise<ProcessedImage> {
+  return createCandidateImageProcessor(createBrowserAdapter())(file)
 }

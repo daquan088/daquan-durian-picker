@@ -22,7 +22,7 @@ button:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--color-
 .primary-button svg { width: 22px; height: 22px; }
 .home-tip { display: grid; gap: var(--space-1); margin: var(--space-4) 0 0; color: var(--color-text-secondary); font-size: 14px; line-height: 1.5; text-align: center; }
 .home-tip strong { color: var(--color-text); font-size: 15px; font-weight: 600; }
-.home-quota-error { margin: var(--space-3) 0 0; color: var(--color-risk-text); font-size: 14px; text-align: center; }
+.home-content .error-panel { margin-top: var(--space-3); text-align: center; }
 .home-screen footer { margin-top: auto; padding-top: var(--space-7); color: var(--color-text-secondary); font-size: 12px; line-height: 1.4; text-align: center; }
 .error-panel { padding: var(--space-4); border: 1px solid var(--color-risk); border-radius: var(--radius-md); color: var(--color-risk-text); background: var(--color-risk-soft); }
 .error-panel p { margin: 0; }
@@ -37,6 +37,7 @@ button:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--color-
 .quota-close { position: absolute; top: var(--space-2); right: var(--space-2); }
 .copy-feedback { min-height: 22px; margin: var(--space-2) 0 0; color: var(--color-primary-dark); font-size: 14px; text-align: center; }
 .copy-feedback--error { color: var(--color-risk-text); }
+.manual-wechat-id { cursor: text; font-weight: 700; user-select: all; -webkit-user-select: all; }
 .qr-container { width: min(100%, 300px); margin: var(--space-5) auto 0; border: 1px solid var(--color-border); background: var(--color-surface); }
 .qr-container img { display: block; width: 100%; height: auto; object-fit: contain; }
 .qr-help { margin: var(--space-2) 0 0; color: var(--color-text-secondary); font-size: 14px; text-align: center; }

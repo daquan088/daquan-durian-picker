@@ -1,9 +1,12 @@
+import { ErrorPanel } from './ErrorPanel'
+
 export interface HomeScreenProps {
   remaining: number | null
   quotaLoading: boolean
   quotaError?: string | null
   canStart: boolean
   onStart: () => void
+  onRetryQuota: () => void
 }
 
 function CameraIcon() {
@@ -15,7 +18,7 @@ function CameraIcon() {
   )
 }
 
-export function HomeScreen({ remaining, quotaLoading, quotaError, canStart, onStart }: HomeScreenProps) {
+export function HomeScreen({ remaining, quotaLoading, quotaError, canStart, onStart, onRetryQuota }: HomeScreenProps) {
   const quotaLabel = quotaLoading
     ? '正在获取体验次数…'
     : remaining === null
@@ -43,7 +46,7 @@ export function HomeScreen({ remaining, quotaLoading, quotaError, canStart, onSt
             <span>拍照开始选榴莲</span>
           </button>
           <p className="home-tip"><strong>随手拍，最多 20 颗</strong><span>遮挡严重或未识别的榴莲不会被编号</span></p>
-          {quotaError ? <p className="home-quota-error" role="alert">{quotaError}</p> : null}
+          {quotaError ? <ErrorPanel message={quotaError} onRetry={onRetryQuota} /> : null}
         </div>
         <footer>由大全提供 · 实体 AI 赋能陪做教练</footer>
       </section>

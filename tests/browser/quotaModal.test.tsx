@@ -6,6 +6,7 @@ import { QuotaModal } from '../../src/components/QuotaModal'
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  Reflect.deleteProperty(document, 'execCommand')
 })
 
 describe('QuotaModal', () => {
@@ -33,14 +34,46 @@ describe('QuotaModal', () => {
     expect((await screen.findByRole('status')).textContent).toContain('微信号已复制')
   })
 
-  it('provides an accessible failure message when copy is unavailable', async () => {
+  it('falls back to a temporary textarea when navigator.clipboard is unavailable', async () => {
     const user = userEvent.setup()
-    vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } })
+    vi.stubGlobal('navigator', {})
+    const execCommand = vi.fn(() => true)
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
     render(<QuotaModal open onClose={vi.fn()} />)
 
     await user.click(screen.getByRole('button', { name: '复制微信号 daquan088' }))
 
-    expect((await screen.findByRole('alert')).textContent).toContain('复制失败，请手动添加微信号 daquan088')
+    expect(execCommand).toHaveBeenCalledWith('copy')
+    expect((await screen.findByRole('status')).textContent).toContain('微信号已复制')
+    expect(document.querySelector('textarea')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '复制微信号 daquan088' }))
+  })
+
+  it('uses the textarea fallback after the Clipboard API rejects', async () => {
+    const user = userEvent.setup()
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'))
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    const execCommand = vi.fn(() => true)
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
+    render(<QuotaModal open onClose={vi.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: '复制微信号 daquan088' }))
+
+    expect(writeText).toHaveBeenCalledWith('daquan088')
+    expect(execCommand).toHaveBeenCalledWith('copy')
+    expect((await screen.findByRole('status')).textContent).toContain('微信号已复制')
+  })
+
+  it('keeps a selectable WeChat ID and clear guidance when both copy methods fail', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } })
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: vi.fn(() => false) })
+    render(<QuotaModal open onClose={vi.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: '复制微信号 daquan088' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain('复制失败，请长按选择微信号 daquan088 手动复制')
+    expect(screen.getByLabelText('可手动复制的微信号').textContent).toBe('daquan088')
   })
 
   it('closes with Escape and its close button', async () => {

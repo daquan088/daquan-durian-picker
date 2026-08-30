@@ -2,8 +2,11 @@ import { parse as parseExif } from 'exifr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDeviceIdManager, DEVICE_ID_STORAGE_KEY } from '../../src/lib/deviceId'
 import {
+  CANDIDATE_IMAGE_MAX_BYTES,
+  CANDIDATE_IMAGE_MAX_EDGE,
   IMAGE_MAX_BYTES,
   PROCESSED_IMAGE_MAX_BYTES,
+  createCandidateImageProcessor,
   createImageProcessor,
   type ImageProcessingAdapter,
 } from '../../src/lib/imageProcessing'
@@ -197,5 +200,30 @@ describe('processImage', () => {
     result.revoke()
     expect(setup.revokeObjectURL).toHaveBeenCalledTimes(1)
     expect(setup.revokeObjectURL).toHaveBeenCalledWith('blob:processed-image')
+  })
+})
+
+describe('processCandidateImage', () => {
+  it('uses the dedicated 1600px edge and 1.5 MiB byte budget', async () => {
+    const atBudget = new Blob([new Uint8Array(CANDIDATE_IMAGE_MAX_BYTES)], { type: 'image/jpeg' })
+    const setup = makeAdapter({ width: 4000, height: 2000, blobs: [atBudget] })
+
+    const result = await createCandidateImageProcessor(setup.adapter)(makeFile(10))
+
+    expect(CANDIDATE_IMAGE_MAX_EDGE).toBe(1600)
+    expect(result).toMatchObject({ width: 1600, height: 800 })
+    expect(result.blob.size).toBe(CANDIDATE_IMAGE_MAX_BYTES)
+    expect(setup.drawImage).toHaveBeenCalledWith(setup.bitmap, 0, 0, 1600, 800)
+    expect(setup.bitmap.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses bounded candidate-specific fallback attempts and rejects output above 1.5 MiB', async () => {
+    const overBudget = new Blob([new Uint8Array(CANDIDATE_IMAGE_MAX_BYTES + 1)], { type: 'image/jpeg' })
+    const setup = makeAdapter({ blobs: Array.from({ length: 12 }, () => overBudget) })
+
+    await expect(createCandidateImageProcessor(setup.adapter)(makeFile(10))).rejects.toMatchObject({ code: 'IMAGE_TOO_LARGE' })
+    expect(setup.toBlob.mock.calls.length).toBeGreaterThan(4)
+    expect(setup.toBlob.mock.calls.length).toBeLessThanOrEqual(8)
+    expect(setup.bitmap.close).toHaveBeenCalledTimes(1)
   })
 })

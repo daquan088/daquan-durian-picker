@@ -5,6 +5,28 @@ export interface QuotaModalProps {
   onClose: () => void
 }
 
+function copyWithTextarea(value: string): boolean {
+  const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  const textarea = document.createElement('textarea')
+  textarea.value = value
+  textarea.readOnly = true
+  textarea.setAttribute('aria-hidden', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.inset = '0 auto auto -9999px'
+  textarea.style.opacity = '0'
+  document.body.append(textarea)
+  try {
+    textarea.focus()
+    textarea.select()
+    return typeof document.execCommand === 'function' && document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    textarea.remove()
+    previousFocus?.focus()
+  }
+}
+
 export function QuotaModal({ open, onClose }: QuotaModalProps) {
   const titleId = useId()
   const dialogRef = useRef<HTMLElement>(null)
@@ -47,12 +69,21 @@ export function QuotaModal({ open, onClose }: QuotaModalProps) {
   if (!open) return null
 
   const copyWechat = async () => {
-    try {
-      await navigator.clipboard.writeText('daquan088')
-      setCopyState('success')
-    } catch {
-      setCopyState('failure')
+    const wechatId = 'daquan088'
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(wechatId)
+        setCopyState('success')
+        return
+      } catch {
+        // Older WebViews can expose Clipboard API but reject it; use the DOM fallback.
+      }
     }
+    if (copyWithTextarea(wechatId)) {
+      setCopyState('success')
+      return
+    }
+    setCopyState('failure')
   }
 
   return (
@@ -65,7 +96,11 @@ export function QuotaModal({ open, onClose }: QuotaModalProps) {
         <p>免费体验额度已用完。想获得更多额度，可添加微信 daquan088。</p>
         <button className="primary-button" type="button" onClick={copyWechat}>复制微信号 daquan088</button>
         {copyState === 'success' ? <p className="copy-feedback" role="status">微信号已复制</p> : null}
-        {copyState === 'failure' ? <p className="copy-feedback copy-feedback--error" role="alert">复制失败，请手动添加微信号 daquan088</p> : null}
+        {copyState === 'failure' ? (
+          <p className="copy-feedback copy-feedback--error" role="alert">
+            复制失败，请长按选择微信号 <span className="manual-wechat-id" aria-label="可手动复制的微信号">daquan088</span> 手动复制
+          </p>
+        ) : null}
         <div className="qr-container">
           <img src="/assets/daquan-wechat-qr.jpg" alt="大全微信二维码" width={760} height={1288} loading="eager" />
         </div>
