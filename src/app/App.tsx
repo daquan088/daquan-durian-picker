@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import type { CandidateFollowUpPayload, FinalRankingSuccessPayload, OverviewSuccessPayload } from '../../shared/contracts'
 import { CandidateWizard } from '../components/CandidateWizard'
 import { FinalResult } from '../components/FinalResult'
+import { exportResultImage } from '../lib/resultImage'
 import { HomeScreen } from '../components/HomeScreen'
 import { OverviewScreen } from '../components/OverviewScreen'
 import { QuotaModal } from '../components/QuotaModal'
@@ -17,9 +18,10 @@ export interface AppProps {
   candidateLoader?: (payload: CandidateFollowUpPayload, options: { signal: AbortSignal; idempotencyKey: string }) => Promise<FinalRankingSuccessPayload>
   overviewImageProcessor?: (file: File) => Promise<ProcessedImage>
   candidateImageProcessor?: (file: File) => Promise<ProcessedImage>
+  resultExporter?: typeof exportResultImage
 }
 
-export function App({ quotaLoader = requestQuota, overviewLoader = requestOverview, candidateLoader = requestCandidates, overviewImageProcessor = processImage, candidateImageProcessor = processCandidateImage }: AppProps) {
+export function App({ quotaLoader = requestQuota, overviewLoader = requestOverview, candidateLoader = requestCandidates, overviewImageProcessor = processImage, candidateImageProcessor = processCandidateImage, resultExporter = exportResultImage }: AppProps) {
   const [state, dispatch] = useReducer(appReducer, initialAppState)
   const [remaining, setRemaining] = useState<number | null>(null)
   const [quotaLoading, setQuotaLoading] = useState(true)
@@ -142,7 +144,7 @@ export function App({ quotaLoader = requestQuota, overviewLoader = requestOvervi
     {overviewImage && !overviewBusy ? <button className="secondary-button" type="button" onClick={() => overviewInputRef.current?.click()}>重新拍摄</button> : null}<QuotaModal open={quotaModalOpen} onClose={closeQuotaModal} /></main>
   if (state.screen === 'shortlist' && state.overview && overviewImage) return <><OverviewScreen image={overviewImage} overview={state.overview} onRestart={reset} onContinue={(ids) => dispatch({ type: 'SELECT_CANDIDATES', ids })} /><QuotaModal open={quotaModalOpen} onClose={closeQuotaModal} /></>
   if (state.screen === 'capture' && state.overview) return <CandidateWizard selectedIds={state.selectedCandidateIds} taskToken={state.overview.taskToken} imageProcessor={candidateImageProcessor} submit={candidateLoader} onBack={() => dispatch({ type: 'BACK_TO_SHORTLIST' })} onSuccess={(result) => dispatch({ type: 'CANDIDATES_SUCCESS', payload: result })} />
-  if (state.screen === 'final' && state.finalResult) return <FinalResult result={state.finalResult} onRestart={reset} />
+  if (state.screen === 'final' && state.finalResult) return <FinalResult result={state.finalResult} onRestart={reset} exportResult={resultExporter} />
 
   return (
     <>
