@@ -143,8 +143,8 @@ describe('processImage', () => {
     const result = await processImage(makeFile(10))
 
     expect(setup.adapter.createImageBitmap).toHaveBeenCalledWith(expect.any(File), { imageOrientation: 'from-image' })
-    expect(result).toMatchObject({ width: 2560, height: 1280 })
-    expect(setup.drawImage).toHaveBeenCalledWith(setup.bitmap, 0, 0, 2560, 1280)
+    expect(result).toMatchObject({ width: 1280, height: 640 })
+    expect(setup.drawImage).toHaveBeenCalledWith(setup.bitmap, 0, 0, 1280, 640)
     expect(setup.toBlob).toHaveBeenCalledWith(expect.anything(), 'image/jpeg', 0.85)
     expect(result.blob.type).toBe('image/jpeg')
     expect(result.dataUrl).toBe('data:image/jpeg;base64,anBlZy1vdXRwdXQ=')
@@ -162,10 +162,10 @@ describe('processImage', () => {
 
   it('performs bounded JPEG fallback compression and rejects a still-overlarge output', async () => {
     const overlarge = new Blob([new Uint8Array(PROCESSED_IMAGE_MAX_BYTES + 1)], { type: 'image/jpeg' })
-    const setup = makeAdapter({ blobs: [overlarge, overlarge, overlarge, overlarge] })
+    const setup = makeAdapter({ blobs: Array.from({ length: 7 }, () => overlarge) })
 
     await expect(createImageProcessor(setup.adapter)(makeFile(10))).rejects.toMatchObject({ code: 'IMAGE_TOO_LARGE' })
-    expect(setup.toBlob).toHaveBeenCalledTimes(4)
+    expect(setup.toBlob).toHaveBeenCalledTimes(7)
     expect(setup.bitmap.close).toHaveBeenCalledTimes(1)
   })
 
@@ -204,26 +204,26 @@ describe('processImage', () => {
 })
 
 describe('processCandidateImage', () => {
-  it('uses the dedicated 1600px edge and 1.5 MiB byte budget', async () => {
+  it('uses the dedicated 768px edge and 18 KiB byte budget', async () => {
     const atBudget = new Blob([new Uint8Array(CANDIDATE_IMAGE_MAX_BYTES)], { type: 'image/jpeg' })
     const setup = makeAdapter({ width: 4000, height: 2000, blobs: [atBudget] })
 
     const result = await createCandidateImageProcessor(setup.adapter)(makeFile(10))
 
-    expect(CANDIDATE_IMAGE_MAX_EDGE).toBe(1600)
-    expect(result).toMatchObject({ width: 1600, height: 800 })
+    expect(CANDIDATE_IMAGE_MAX_EDGE).toBe(768)
+    expect(result).toMatchObject({ width: 768, height: 384 })
     expect(result.blob.size).toBe(CANDIDATE_IMAGE_MAX_BYTES)
-    expect(setup.drawImage).toHaveBeenCalledWith(setup.bitmap, 0, 0, 1600, 800)
+    expect(setup.drawImage).toHaveBeenCalledWith(setup.bitmap, 0, 0, 768, 384)
     expect(setup.bitmap.close).toHaveBeenCalledTimes(1)
   })
 
-  it('uses bounded candidate-specific fallback attempts and rejects output above 1.5 MiB', async () => {
+  it('uses bounded candidate-specific fallback attempts and rejects output above 18 KiB', async () => {
     const overBudget = new Blob([new Uint8Array(CANDIDATE_IMAGE_MAX_BYTES + 1)], { type: 'image/jpeg' })
     const setup = makeAdapter({ blobs: Array.from({ length: 12 }, () => overBudget) })
 
     await expect(createCandidateImageProcessor(setup.adapter)(makeFile(10))).rejects.toMatchObject({ code: 'IMAGE_TOO_LARGE' })
     expect(setup.toBlob.mock.calls.length).toBeGreaterThan(4)
-    expect(setup.toBlob.mock.calls.length).toBeLessThanOrEqual(8)
+    expect(setup.toBlob.mock.calls.length).toBeLessThanOrEqual(9)
     expect(setup.bitmap.close).toHaveBeenCalledTimes(1)
   })
 })

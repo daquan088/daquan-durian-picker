@@ -94,7 +94,7 @@ function mapCoordinatorError(error: unknown): HttpError {
 }
 
 function parseCandidates(value: unknown): CandidateImageInput[] {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 3) {
+  if (!Array.isArray(value) || value.length !== 1) {
     throw new HttpError(400, 'INVALID_REQUEST', '候选榴莲数量无效。')
   }
   const ids = new Set<number>()

@@ -1,8 +1,8 @@
 export const IMAGE_MAX_BYTES = 25 * 1024 * 1024
-export const PROCESSED_IMAGE_MAX_BYTES = 6 * 1024 * 1024
-export const PROCESSED_IMAGE_MAX_EDGE = 2560
-export const CANDIDATE_IMAGE_MAX_BYTES = Math.floor(1.5 * 1024 * 1024)
-export const CANDIDATE_IMAGE_MAX_EDGE = 1600
+export const PROCESSED_IMAGE_MAX_BYTES = 70 * 1024
+export const PROCESSED_IMAGE_MAX_EDGE = 1280
+export const CANDIDATE_IMAGE_MAX_BYTES = 18 * 1024
+export const CANDIDATE_IMAGE_MAX_EDGE = 768
 
 export type ImageProcessingErrorCode = 'IMAGE_TOO_LARGE' | 'INVALID_IMAGE' | 'UNSUPPORTED_MEDIA_TYPE'
 
@@ -63,6 +63,9 @@ const OVERVIEW_COMPRESSION_ATTEMPTS: readonly CompressionAttempt[] = [
   { scale: 1, quality: 0.72 },
   { scale: 0.8, quality: 0.72 },
   { scale: 0.65, quality: 0.68 },
+  { scale: 0.5, quality: 0.55 },
+  { scale: 0.4, quality: 0.5 },
+  { scale: 0.3, quality: 0.45 },
 ]
 
 const CANDIDATE_COMPRESSION_ATTEMPTS: readonly CompressionAttempt[] = [
@@ -73,19 +76,21 @@ const CANDIDATE_COMPRESSION_ATTEMPTS: readonly CompressionAttempt[] = [
   { scale: 0.6, quality: 0.6 },
   { scale: 0.5, quality: 0.56 },
   { scale: 0.4, quality: 0.52 },
+  { scale: 0.3, quality: 0.45 },
+  { scale: 0.25, quality: 0.4 },
 ]
 
 const OVERVIEW_PROFILE: ImageProcessingProfile = {
   maxBytes: PROCESSED_IMAGE_MAX_BYTES,
   maxEdge: PROCESSED_IMAGE_MAX_EDGE,
-  label: '6 MiB',
+  label: '70 KiB',
   attempts: OVERVIEW_COMPRESSION_ATTEMPTS,
 }
 
 const CANDIDATE_PROFILE: ImageProcessingProfile = {
   maxBytes: CANDIDATE_IMAGE_MAX_BYTES,
   maxEdge: CANDIDATE_IMAGE_MAX_EDGE,
-  label: '1.5 MiB',
+  label: '18 KiB',
   attempts: CANDIDATE_COMPRESSION_ATTEMPTS,
 }
 
@@ -258,7 +263,7 @@ export function createImageProcessor(adapter: ImageProcessingAdapter) {
   return createConfiguredImageProcessor(adapter, OVERVIEW_PROFILE)
 }
 
-/** Creates the lower-budget candidate follow-up processor used for up to nine photos. */
+/** Creates the lower-budget candidate follow-up processor used for three detail photos. */
 export function createCandidateImageProcessor(adapter: ImageProcessingAdapter) {
   return createConfiguredImageProcessor(adapter, CANDIDATE_PROFILE)
 }

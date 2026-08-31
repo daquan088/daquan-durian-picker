@@ -59,7 +59,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ? {
             screen: 'shortlist',
             overview: copyOverview(action.payload),
-            selectedCandidateIds: action.payload.shortlist_ids.slice(0, 3),
+            selectedCandidateIds: action.payload.shortlist_ids.slice(0, 1),
             finalResult: null,
           }
         : state
@@ -68,7 +68,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       if (state.screen !== 'shortlist' || state.overview === null) return state
       const ids = [...action.ids]
       const knownIds = new Set(state.overview.fruits.filter((fruit) => fruit.status !== 'insufficient').map((fruit) => fruit.id))
-      if (ids.length === 0 || ids.length > 3 || new Set(ids).size !== ids.length || ids.some((id) => !knownIds.has(id))) return state
+      if (ids.length !== 1 || new Set(ids).size !== ids.length || ids.some((id) => !knownIds.has(id))) return state
       return { ...state, screen: 'capture', selectedCandidateIds: ids }
     }
 

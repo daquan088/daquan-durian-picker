@@ -159,11 +159,11 @@ describe('secure analysis routes', () => {
     expect(quota.reserve).not.toHaveBeenCalled()
   })
 
-  it('enforces the total 25 MiB request cap before JSON parsing', async () => {
+  it('enforces the total 5.5 MiB request cap before JSON parsing', async () => {
     const { app, ai } = makeApp()
     const request = new Request(`${origin}/api/analyze-overview`, {
       method: 'POST',
-      headers: { origin, 'x-device-id': deviceId, 'x-idempotency-key': idempotencyKey, 'cf-connecting-ip': '203.0.113.7', 'content-type': 'application/json', 'content-length': String(25 * 1024 * 1024 + 1) },
+      headers: { origin, 'x-device-id': deviceId, 'x-idempotency-key': idempotencyKey, 'cf-connecting-ip': '203.0.113.7', 'content-type': 'application/json', 'content-length': String(Math.floor(5.5 * 1024 * 1024) + 1) },
       body: JSON.stringify({ image }),
     })
     await expectError(await app.fetch(request), 413, 'IMAGE_TOO_LARGE')
@@ -179,7 +179,7 @@ describe('secure analysis routes', () => {
     })
     const request = new Request(`${origin}/api/analyze-overview`, {
       method: 'POST',
-      headers: { origin, 'x-device-id': deviceId, 'x-idempotency-key': idempotencyKey, 'cf-connecting-ip': '203.0.113.7', 'content-type': 'application/json', 'content-length': String(25 * 1024 * 1024 + 1) },
+      headers: { origin, 'x-device-id': deviceId, 'x-idempotency-key': idempotencyKey, 'cf-connecting-ip': '203.0.113.7', 'content-type': 'application/json', 'content-length': String(Math.floor(5.5 * 1024 * 1024) + 1) },
       body,
       duplex: 'half',
     } as RequestInit)
@@ -188,13 +188,13 @@ describe('secure analysis routes', () => {
     expect(ai.analyzeOverview).not.toHaveBeenCalled()
   })
 
-  it('enforces the 25 MiB cap while reading an unbounded streaming body without Content-Length', async () => {
+  it('enforces the 5.5 MiB cap while reading an unbounded streaming body without Content-Length', async () => {
     const { app, ai } = makeApp()
     const chunk = new Uint8Array(1024 * 1024)
     let emitted = 0
     const body = new ReadableStream<Uint8Array>({
       pull(controller) {
-        if (emitted === 26) {
+        if (emitted === 6) {
           controller.close()
           return
         }
@@ -253,10 +253,12 @@ describe('secure analysis routes', () => {
     expect(quota.getRemaining).not.toHaveBeenCalled()
   })
 
-  it('rejects four candidates and candidates that do not contain exactly three named views', async () => {
+  it('rejects multiple candidates and candidates that do not contain exactly three named views', async () => {
     const { app } = makeApp()
     const four = { taskToken: 'invalid', candidates: [1, 2, 3, 4].map((candidate_id) => ({ candidate_id, stem: image, body: image, bottom: image })) }
     await expectError(await app.fetch(apiRequest('/api/analyze-candidates', four)), 400, 'INVALID_REQUEST')
+    const two = { taskToken: 'invalid', candidates: [1, 2].map((candidate_id) => ({ candidate_id, stem: image, body: image, bottom: image })) }
+    await expectError(await app.fetch(apiRequest('/api/analyze-candidates', two)), 400, 'INVALID_REQUEST')
     const missingView = { taskToken: 'invalid', candidates: [{ candidate_id: 1, stem: image, body: image }] }
     await expectError(await app.fetch(apiRequest('/api/analyze-candidates', missingView)), 400, 'INVALID_REQUEST')
   })

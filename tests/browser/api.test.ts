@@ -38,7 +38,7 @@ describe('browser API client', () => {
     expect(createIdempotencyKey()).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
   })
 
-  it('sends a compliant three-candidate nine-image request within the shared 25 MiB boundary', async () => {
+  it('sends a compliant one-candidate three-image request within the shared 96 KiB boundary', async () => {
     const encodedImage = `data:image/jpeg;base64,${'A'.repeat(Math.ceil(CANDIDATE_IMAGE_MAX_BYTES / 3) * 4)}`
     const payload = candidatePayload(encodedImage)
     const response = {
@@ -63,7 +63,7 @@ describe('browser API client', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
   })
 
-  it('rejects an over-25 MiB candidate JSON body locally without calling fetch', async () => {
+  it('rejects an over-96 KiB candidate JSON body locally without calling fetch', async () => {
     const oversizedImage = `data:image/jpeg;base64,${'A'.repeat(3 * 1024 * 1024)}`
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
@@ -76,7 +76,7 @@ describe('browser API client', () => {
 function candidatePayload(image: string): CandidateFollowUpPayload {
   return {
     taskToken: 'task-token',
-    candidates: [1, 2, 3].map((candidateId) => ({
+    candidates: [1].map((candidateId) => ({
       candidate_id: candidateId,
       stem: image,
       body: image,

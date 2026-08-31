@@ -1,0 +1,16 @@
+{
+  "$schema": "https://static.cloudbase.net/cli/cloudbaserc.schema.json",
+  "envId": "daquan-durian-picker-d5aa5eeef39",
+  "functionRoot": ".",
+  "functions": [
+    {
+      "name": "daquan-durian-app",
+      "runtime": "Nodejs20.19",
+      "handler": "index.main",
+      "timeout": 120,
+      "memorySize": 256,
+      "public": true,
+      "gatewayPath": "/"
+    }
+  ]
+}

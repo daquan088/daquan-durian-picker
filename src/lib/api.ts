@@ -11,7 +11,7 @@ import {
 import { getDeviceId } from './deviceId'
 
 /** Must stay aligned with worker/http.ts MAX_REQUEST_BODY_BYTES. */
-export const API_MAX_REQUEST_BODY_BYTES = 25 * 1024 * 1024
+export const API_MAX_REQUEST_BODY_BYTES = 96 * 1024
 
 export class AppError extends Error {
   constructor(

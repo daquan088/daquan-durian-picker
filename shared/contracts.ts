@@ -82,7 +82,7 @@ export const candidateFollowUpSchema = z.object({
 
 export const candidateFollowUpPayloadSchema = z.object({
   taskToken: z.string().trim().min(1).max(4096),
-  candidates: z.array(candidateFollowUpSchema).min(1).max(3)
+  candidates: z.array(candidateFollowUpSchema).length(1)
     .refine((candidates) => new Set(candidates.map(({ candidate_id }) => candidate_id)).size === candidates.length, {
       message: 'Candidate IDs must be unique.',
     }),

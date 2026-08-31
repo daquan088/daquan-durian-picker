@@ -8,3 +8,12 @@ playwright-report/
 test-results/
 coverage/
 *.local
+
+# Tencent Cloud EdgeOne
+.env
+.edgeone/*
+.tef_dist/*
+cloudbase-event/public/
+cloudbase-event/backend.cjs
+cloudbase-run/public/
+tmp/*.jpg

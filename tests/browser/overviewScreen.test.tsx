@@ -36,15 +36,14 @@ describe('OverviewScreen', () => {
     expect(screen.getByTestId('fruit-box-1').classList.contains('durian-box--preferred')).toBe(true)
   })
 
-  it('starts with shortlist selections and prevents selecting more than three', async () => {
+  it('starts with one shortlist selection and prevents selecting more than one', async () => {
     const user = userEvent.setup()
     const larger = { ...overview, fruits: [1, 2, 3, 4].map((id) => ({ ...overview.fruits[0]!, id })), shortlist_ids: [1, 2, 3, 4] }
     render(<OverviewScreen image={image} overview={larger} onContinue={vi.fn()} onRestart={vi.fn()} />)
     const checks = screen.getAllByRole('checkbox') as HTMLInputElement[]
     expect(checks[0]?.checked).toBe(true)
-    await user.click(checks[0]!)
     await user.click(checks[3]!)
-    await user.click(checks[0]!)
-    expect(document.body.contains(screen.getByText('最多选择 3 颗候选榴莲。'))).toBe(true)
+    expect(checks[3]?.checked).toBe(false)
+    expect(document.body.contains(screen.getByText('演示版每次精拍 1 颗候选榴莲。'))).toBe(true)
   })
 })

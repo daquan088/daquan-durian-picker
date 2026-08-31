@@ -5,7 +5,7 @@ import { handleOverview } from './analysis/overview'
 import { createQuotaCoordinatorClient } from './quota/quotaCoordinator'
 import type { Env } from './env'
 
-export const MAX_REQUEST_BODY_BYTES = 25 * 1024 * 1024
+export const MAX_REQUEST_BODY_BYTES = 96 * 1024
 /** Browser-generated canonical UUID required on every API request, including GET /api/quota. */
 export const DEVICE_ID_HEADER = 'x-device-id'
 /** Browser-generated canonical UUID required once per POST action and reused for transport retries. */

@@ -28,7 +28,7 @@ function toShortlist() {
 }
 
 describe('appReducer', () => {
-  it('rejects more than three candidate IDs without changing state', () => {
+  it('rejects more than one candidate ID without changing state', () => {
     const state = toShortlist()
     const next = appReducer(state, { type: 'SELECT_CANDIDATES', ids: [1, 2, 3, 4] })
 
@@ -45,11 +45,11 @@ describe('appReducer', () => {
 
   it('copies incoming arrays so caller mutation cannot change app state', () => {
     const state = toShortlist()
-    const chosen = [1, 2]
+    const chosen = [2]
     const next = appReducer(state, { type: 'SELECT_CANDIDATES', ids: chosen })
     chosen[0] = 99
 
-    expect(next.selectedCandidateIds).toEqual([1, 2])
+    expect(next.selectedCandidateIds).toEqual([2])
   })
 
   it('returns from the candidate camera to the existing shortlist without losing the task', () => {

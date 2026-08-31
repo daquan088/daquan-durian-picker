@@ -14,14 +14,14 @@ const strength: Record<string, string> = { high: '充分', medium: '一般', low
 const status: Record<string, string> = { preferred: '优先候选', normal: '可补拍', risky: '谨慎考虑', insufficient: '证据不足' }
 
 export function OverviewScreen({ image, overview, onContinue, onRestart }: OverviewScreenProps) {
-  const [selected, setSelected] = useState<number[]>(() => overview.shortlist_ids.slice(0, 3))
+  const [selected, setSelected] = useState<number[]>(() => overview.shortlist_ids.slice(0, 1))
   const [selectionMessage, setSelectionMessage] = useState('')
   const shortlist = useMemo(() => overview.shortlist_ids
     .map((id) => overview.fruits.find((fruit) => fruit.id === id))
     .filter((fruit): fruit is NonNullable<typeof fruit> => fruit !== undefined), [overview])
   const toggle = (id: number) => {
     if (selected.includes(id)) { setSelected(selected.filter((item) => item !== id)); setSelectionMessage(''); return }
-    if (selected.length >= 3) { setSelectionMessage('最多选择 3 颗候选榴莲。'); return }
+    if (selected.length >= 1) { setSelectionMessage('演示版每次精拍 1 颗候选榴莲。'); return }
     setSelected([...selected, id]); setSelectionMessage('')
   }
   return <main className="app-shell flow-screen">
@@ -34,7 +34,7 @@ export function OverviewScreen({ image, overview, onContinue, onRestart }: Overv
     <p className="result-count">识别到 {overview.fruits.length} 颗；未识别或遮挡严重的榴莲不参与推荐</p>
     {overview.warnings.length ? <div className="notice-card" role="status">{overview.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}
     <section aria-labelledby="shortlist-title"><h2 id="shortlist-title">优先补拍候选</h2>
-      <p className="secondary-copy">可最多选择 3 颗，补拍果柄、侧面和果刺、底部果瓣线。</p>
+      <p className="secondary-copy">演示版选择 1 颗，补拍果柄、侧面和果刺、底部果瓣线。</p>
       <div className="shortlist-list">
         {shortlist.map((fruit) => <label className={`candidate-card candidate-card--${fruit.status}`} key={fruit.id}>
           <input type="checkbox" checked={selected.includes(fruit.id)} disabled={fruit.status === 'insufficient'} onChange={() => toggle(fruit.id)} />
