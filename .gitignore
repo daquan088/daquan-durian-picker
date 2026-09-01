@@ -15,5 +15,6 @@ coverage/
 .tef_dist/*
 cloudbase-event/public/
 cloudbase-event/backend.cjs
+cloudbase-event/cloudbaserc.json
 cloudbase-run/public/
 tmp/*.jpg

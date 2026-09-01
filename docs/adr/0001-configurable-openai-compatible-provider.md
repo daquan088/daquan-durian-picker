@@ -9,12 +9,12 @@
 
 首版固定使用 `gpt-5.6-terra` 完成泰国金枕榴莲的可见外观分析。用户提供的 API Key 来自 OpenAI 兼容中转站，而不是 OpenAI 官方端点；供应商地址和兼容协议可能变化，但模型、安全边界、输出契约与业务规则不得随供应商变化。
 
-经实际验证，生产供应商 `kxai.cc` 支持 `gpt-5.6-terra`、图片输入、Responses API 和严格 JSON Schema 输出。真实图片烟雾测试返回了该模型的有效结构化结果。
+经实际验证，OpenAI Responses API 兼容供应商可以支持图片输入和严格 JSON Schema 输出。为了让开源部署者使用自己的供应商和额度，仓库不包含作者的生产供应商、模型账号或凭证。
 
 ## Decision
 
 - 继续固定模型 ID 为 `gpt-5.6-terra`，不静默降级或替换为 Sol、Luna 或其他模型。
-- 通过服务端环境变量配置 OpenAI 兼容 Base URL；当前生产配置为 `https://kxai.cc/v1`。
+- 通过服务端环境变量配置 OpenAI 兼容 Base URL；开源模板默认示例为 `https://api.openai.com/v1`。
 - 只使用已完成真实图片验证的 Responses API，不为未投入使用的供应商保留额外协议分支。
 - API Key 仅保存在本地忽略文件和 Cloudflare Secret 中，不进入浏览器、源码、Git 历史或日志。
 - 模型输出仍必须通过本项目的 Zod 契约验证；供应商响应体和密钥不得透传给终端用户。

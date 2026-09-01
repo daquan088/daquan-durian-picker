@@ -1,6 +1,9 @@
 {
   "name": "durian-pick-ai-demo",
   "version": "0.1.0",
+  "description": "手机端 AI 金枕榴莲外观辅助挑选工具",
+  "license": "Apache-2.0",
+  "repository": "github:daquan088/daquan-durian-picker",
   "private": true,
   "type": "module",
   "engines": {

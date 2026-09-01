@@ -144,13 +144,13 @@ describe('OpenAI Responses client', () => {
       assistantResponse(overviewFixture),
     )
     const client = createOpenAIResponsesClient({
-      env: { ...env, OPENAI_BASE_URL: 'https://kxai.cc/v1/' },
+      env: { ...env, OPENAI_BASE_URL: 'https://gateway.example/v1/' },
       fetch,
     })
 
     await client.analyzeOverview({ images: [image] })
 
-    expect(fetch.mock.calls[0]?.[0]).toBe('https://kxai.cc/v1/responses')
+    expect(fetch.mock.calls[0]?.[0]).toBe('https://gateway.example/v1/responses')
   })
 
   it.each([

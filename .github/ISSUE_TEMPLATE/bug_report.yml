@@ -1,0 +1,22 @@
+name: Bug 报告
+description: 报告可以复现的程序问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    attributes:
+      label: 问题描述
+      description: 请说明实际结果与预期结果，勿粘贴密钥或顾客照片。
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 复现步骤
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: 浏览器与部署环境
+  - type: textarea
+    attributes:
+      label: 已脱敏日志

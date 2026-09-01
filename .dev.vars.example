@@ -1,3 +1,5 @@
-OPENAI_API_KEY=
-QUOTA_SALT=
-TASK_TOKEN_SECRET=
+OPENAI_API_KEY=your-own-api-key
+OPENAI_BASE_URL=https://api.openai.com/v1
+MODEL_ID=your-vision-model-id
+QUOTA_SALT=generate-a-long-random-value
+TASK_TOKEN_SECRET=generate-another-long-random-value
